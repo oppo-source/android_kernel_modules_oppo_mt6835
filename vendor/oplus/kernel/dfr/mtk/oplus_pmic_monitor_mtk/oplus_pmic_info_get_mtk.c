@@ -171,6 +171,6 @@ struct PMICHistoryKernelStruct *get_pmic_history(void)
 
 MODULE_DESCRIPTION("OPLUS ocp status");
 MODULE_LICENSE("GPL v2");
-MODULE_AUTHOR("Lee <wangyang4@oppo.com>");
+MODULE_AUTHOR("Lee");
 
 

@@ -6,10 +6,10 @@
 * To optimize frequence point select base on power effiency.
 * Version : 1.1
 * Date : 2022-4-1
-* Author : chengzhangtao@oppo.com
+* Author : chengzhangtao
 * ---------------- Revision History: --------------------------
 * <version> <date> < author > <desc>
-* Revision 1.0， 2021-5-30, chengzhangtao@oppo.com
+* Revision 1.0， 2021-5-30, chengzhangtao
 * Modified to be suitable to the new coding rules in all functions.
 ****************************************************************/
 

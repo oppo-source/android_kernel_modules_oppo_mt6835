@@ -7,6 +7,7 @@
 #include <linux/module.h>
 #include <linux/gpio.h>
 #include <linux/string.h>
+#include <linux/thermal.h>
 
 #include "ft3518_core.h"
 
@@ -1458,7 +1459,53 @@ mode_err:
 	return ret;
 }
 
+static int fts_send_temperature(void *chip_data, int temp, bool normal_mode);
 
+#ifndef CONFIG_ARCH_QTI_VM
+static int get_now_temp(struct chip_data_ft3518 *ts_data)
+{
+	struct touchpanel_data *ts = i2c_get_clientdata(ts_data->client);
+	int result = -40000;
+	int ret = 0;
+
+#ifdef CONFIG_TOUCHPANEL_TRUSTED_TOUCH
+	if (atomic_read(&ts->trusted_touch_enabled) == 1) {
+		TPD_INFO("%s: Trusted touch is already enabled, do not get temp\n", __func__);
+		return ret;
+	}
+#endif
+
+	if (ts->is_suspended) {
+		TPD_INFO("%s : !ts->is_suspended\n", __func__);
+		return ret;
+	}
+
+	ts->oplus_shell_themal = thermal_zone_get_zone_by_name("shell_back");
+
+	if (IS_ERR(ts->oplus_shell_themal)) {
+		TPD_INFO("%s Can't get shell_back\n", __func__);
+		ts->oplus_shell_themal = NULL;
+		ret = -1;
+	}
+
+	TPD_DEBUG("%s get shell_back ret:%d\n", __func__, ret);
+
+	ret = thermal_zone_get_temp(ts->oplus_shell_themal, &result);
+	if (ret < 0)
+		TPD_INFO("%s can't thermal_zone_get_temp, ret=%d\n", __func__, ret);
+
+	result = result / 1000;
+	TPD_INFO("%s : temp is %d\n", __func__, result);
+
+	if (result <= MAX_TEMPERATURE && result >= MIN_TEMPERATURE) {
+		fts_send_temperature(ts->chip_data, result, true);
+	} else {
+		ts->monitor_data.abnormal_temperature_count++;
+	}
+
+	return ret;
+}
+#endif
 
 /*
  * return success: 0; fail : negative
@@ -1469,7 +1516,11 @@ static int fts_reset(void *chip_data)
 
 	TPD_INFO("%s:call\n", __func__);
 	fts_hw_reset(ts_data, RESET_TO_NORMAL_TIME);
-
+        if (ts_data->ts->temperature_detect_shellback_support == true) {
+#ifndef CONFIG_ARCH_QTI_VM
+                get_now_temp(ts_data);
+#endif
+        }
 	return 0;
 }
 
@@ -2260,6 +2311,25 @@ static int fts_set_high_frame_rate(void *chip_data, int level, int time)
 	return ret;
 }
 
+static int fts_send_temperature(void *chip_data, int temp, bool normal_mode)
+{
+        struct chip_data_ft3518 *ts_data = (struct chip_data_ft3518 *)chip_data;
+        int ret = 0;
+
+        ts_data->tp_temperature = temp;
+        TPD_INFO("%s:temperature:%d!\n", __func__, ts_data->tp_temperature);
+
+        if (!!normal_mode) {
+		ret = touch_i2c_write_byte(ts_data->client, FTS_REG_TEMPERATURE, ts_data->tp_temperature&0xFF);
+                if (ret < 0) {
+                        TPD_INFO("%s:fts send temperature fail", __func__);
+                }
+                TPD_INFO("%s:fts send temperature:%d suc!", __func__, ts_data->tp_temperature);
+        }
+
+        return 0;
+}
+
 static void fts_set_gesture_state(void *chip_data, int state)
 {
 	struct chip_data_ft3518 *ts_data = (struct chip_data_ft3518 *)chip_data;
@@ -2382,6 +2452,7 @@ static struct oplus_touchpanel_operations fts_ops = {
 	.enable_gesture_mask        = fts_enable_gesture_mask,
 	.set_high_frame_rate        = fts_set_high_frame_rate,
 	.set_gesture_state          = fts_set_gesture_state,
+	.send_temperature           = fts_send_temperature,
 	/*todo
 	        .get_vendor                 = synaptics_get_vendor,
 	        .get_keycode                = synaptics_get_keycode,

@@ -4320,7 +4320,7 @@ int oplus_get_adapter_svid(void)
 	uint32_t vdos[VDO_MAX_NR] = {0};
 	struct tcpc_device *tcpc_dev = tcpc_dev_get_by_name("type_c_port0");
 	struct tcpm_svid_list svid_list = {0, {0}};
-	bool recheck_svid = true;
+	int recheck_svid = 0;
 
 	if (tcpc_dev == NULL || !g_oplus_chip) {
 		chg_err("tcpc_dev is null return\n");
@@ -4346,9 +4346,9 @@ recheck:
 	if (!g_oplus_chip->chg_ops->check_chrdet_status() &&
 	    g_oplus_chip->pd_svooc == true &&
 	    get_charger_ic_det(g_oplus_chip) == (1 << SC6607) &&
-	    recheck_svid) {
+	    recheck_svid < 3) {
 		msleep(10);
-		recheck_svid = false;
+		recheck_svid++;
 		if (g_oplus_chip->pd_svooc == false)
 			goto recheck;
 	}
@@ -5129,7 +5129,10 @@ static int oplus_get_chargeric_temp(void)
 	int val = 0;
 	int ret = 0, temp;
 
-	if (pinfo && pinfo->chargeric_temp_chan) {
+	if (!pinfo)
+		return -EINVAL;
+
+	if (pinfo->chargeric_temp_chan) {
 		ret = iio_read_channel_processed(pinfo->chargeric_temp_chan, &val);
 		if (ret< 0) {
 			chg_err("read chargeric_temp_chan volt failed, rc=%d\n", ret);
@@ -5850,8 +5853,8 @@ static void oplus_ccdetect_enable(void)
 
 	/* set DRP mode */
 	if (pinfo != NULL && pinfo->tcpc != NULL) {
-		tcpm_typec_change_role(pinfo->tcpc, TYPEC_ROLE_DRP);
-		pr_err("%s: set drp", __func__);
+		tcpm_typec_change_role(pinfo->tcpc, TYPEC_ROLE_TRY_SNK);
+		pr_err("%s: set typec role try sink", __func__);
 	}
 }
 

@@ -389,7 +389,11 @@ static int oplus_ofp_hbm_wait_handle(struct drm_crtc *crtc, struct cmdq_pkt *cmd
 	} else {
 		refresh_rate = panel_ext->dyn_fps.vact_timing_fps;
 	}
-	us_per_frame = 1000000/refresh_rate;
+
+	if (refresh_rate != 0)
+		us_per_frame = 1000000/refresh_rate;
+	else
+		us_per_frame = 1000000/120;
 
 	if (before_hbm) {
 		if (hbm_en) {
@@ -503,11 +507,6 @@ static int oplus_ofp_set_panel_hbm(struct drm_crtc *crtc, bool hbm_en)
 	if (!p_oplus_ofp_params || !crtc || !mtk_crtc) {
 		OFP_ERR("Invalid params\n");
 		return -EINVAL;
-	}
-
-	if (oplus_ofp_video_mode_aod_fod_is_enabled() && oplus_ofp_get_aod_state()) {
-		OFP_DEBUG("should not set panel hbm if panel is in video mode aod state\n");
-		return 0;
 	}
 
 	if (oplus_ofp_get_hbm_state() == hbm_en) {
@@ -879,11 +878,7 @@ int oplus_ofp_doze_status_handle(bool doze_enable, void *drm_crtc, void *mtk_pan
 					oplus_disp_trace_begin("oplus_ofp_hbm_off_before_doze_enable");
 					if (ext && ext->funcs && ext->funcs->hbm_set_cmdq) {
 						OFP_INFO("hbm off before doze enable\n");
-						if (oplus_ofp_video_mode_aod_fod_is_enabled()) {
-							ext->funcs->hbm_set_cmdq(drm_panel, mtk_dsi, dcs_write_gce, cmdq_handle, false);
-						} else {
-							ext->funcs->hbm_set_cmdq(drm_panel, mtk_dsi, dcs_write_gce, NULL, false);
-						}
+						ext->funcs->hbm_set_cmdq(drm_panel, mtk_dsi, dcs_write_gce, NULL, false);
 					}
 					oplus_ofp_set_hbm_state(false);
 					oplus_disp_trace_end("oplus_ofp_hbm_off_before_doze_enable");
@@ -1111,6 +1106,7 @@ int oplus_ofp_crtc_aod_off_set(void)
 int oplus_ofp_video_mode_aod_handle(void *drm_crtc, void *mtk_panel_ext, void *drm_panel, void *mtk_dsi, void *dcs_write_gce, void *cmdq_handle)
 {
 	unsigned int refresh_rate = 0;
+	static unsigned int last_refresh_rate = 0;
 	bool is_doze_mode = false;
 	struct mtk_ddp_comp *comp = NULL;
 	struct drm_crtc *crtc = drm_crtc;
@@ -1158,13 +1154,14 @@ int oplus_ofp_video_mode_aod_handle(void *drm_crtc, void *mtk_panel_ext, void *d
 				OFP_INFO("set_aod_light_mode:%u\n", p_oplus_ofp_params->aod_light_mode);
 			}
 		}
-	} else if (oplus_ofp_get_aod_state() && (refresh_rate != 30)) {
+	} else if (oplus_ofp_get_aod_state() && (refresh_rate != 30) && (last_refresh_rate == 30)) {
 		if (ext && ext->funcs && ext->funcs->doze_disable) {
 			OFP_INFO("debug for doze_disable\n");
 			ext->funcs->doze_disable(drm_panel, mtk_dsi, dcs_write_gce, handle);
 			oplus_ofp_aod_off_status_handle(mtk_crtc);
 		}
 	}
+	last_refresh_rate = refresh_rate;
 
 	oplus_disp_trace_end("oplus_ofp_video_mode_aod_handle");
 
@@ -1842,6 +1839,6 @@ ssize_t oplus_ofp_get_fake_aod_attr(struct kobject *obj,
 	return sprintf(buf, "%u\n", p_oplus_ofp_params->fake_aod_mode);
 }
 
-MODULE_AUTHOR("Liuhe Zhong <zhongliuhe@oppo.com>");
+MODULE_AUTHOR("Liuhe Zhong");
 MODULE_DESCRIPTION("OPPO ofp device");
 MODULE_LICENSE("GPL v2");

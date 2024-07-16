@@ -178,7 +178,7 @@ int oplus_display_panel_get_pwr(void *buf)
 	return ret;
 }
 
-MODULE_AUTHOR("Xiaolei Gao <gaoxiaolei@oppo.com>");
+MODULE_AUTHOR("Xiaolei Gao");
 MODULE_DESCRIPTION("OPPO panel power");
 MODULE_LICENSE("GPL v2");
 

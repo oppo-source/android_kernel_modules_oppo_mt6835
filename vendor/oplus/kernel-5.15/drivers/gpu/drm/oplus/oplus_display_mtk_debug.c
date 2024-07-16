@@ -160,7 +160,7 @@ void oplus_printf_backlight_log(struct drm_crtc *crtc, unsigned int bl_lvl) {
 	}
 }
 EXPORT_SYMBOL(oplus_printf_backlight_log);
-MODULE_AUTHOR("Xiaolei Gao <gaoxiaolei@oppo.com>");
+MODULE_AUTHOR("Xiaolei Gao");
 MODULE_DESCRIPTION("OPPO debug device");
 MODULE_LICENSE("GPL v2");
 

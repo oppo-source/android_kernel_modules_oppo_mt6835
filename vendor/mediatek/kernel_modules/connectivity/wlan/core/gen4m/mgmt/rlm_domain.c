@@ -204,7 +204,7 @@ static const uint16_t g_u2CountryGroup2[] = {
 
 static const uint16_t g_u2CountryGroup3[] = {
 	COUNTRY_CODE_OM, COUNTRY_CODE_PH, COUNTRY_CODE_SG,
-	COUNTRY_CODE_ZA, COUNTRY_CODE_VN, COUNTRY_CODE_DO, COUNTRY_CODE_FK,
+	COUNTRY_CODE_ZA, COUNTRY_CODE_VN, COUNTRY_CODE_FK,
 	COUNTRY_CODE_KZ, COUNTRY_CODE_MZ, COUNTRY_CODE_NA, COUNTRY_CODE_LC,
 	COUNTRY_CODE_VC, COUNTRY_CODE_UA, COUNTRY_CODE_UZ, COUNTRY_CODE_ZW,
 	COUNTRY_CODE_AT, COUNTRY_CODE_BE, COUNTRY_CODE_HR, COUNTRY_CODE_CZ,
@@ -235,7 +235,6 @@ static const uint16_t g_u2CountryGroup4[] = {
 };
 
 static const uint16_t g_u2CountryGroup5[] = {
-	COUNTRY_CODE_PY, COUNTRY_CODE_UY
 };
 
 static const uint16_t g_u2CountryGroup6[] = { COUNTRY_CODE_RU };
@@ -308,7 +307,8 @@ static const uint16_t g_u2CountryGroup22[] = {
 static const uint16_t g_u2CountryGroup23[] = {
 	COUNTRY_CODE_TW, COUNTRY_CODE_CL, COUNTRY_CODE_BR, COUNTRY_CODE_US,
 	COUNTRY_CODE_CR, COUNTRY_CODE_PE, COUNTRY_CODE_GT, COUNTRY_CODE_CO,
-	COUNTRY_CODE_PA, COUNTRY_CODE_SV, COUNTRY_CODE_EC
+	COUNTRY_CODE_PA, COUNTRY_CODE_SV, COUNTRY_CODE_EC, COUNTRY_CODE_UY,
+	COUNTRY_CODE_PY, COUNTRY_CODE_DO
 };
 
 static const uint16_t g_u2CountryGroup24[] = {};
@@ -1307,6 +1307,8 @@ struct oplus_country_pwr_limit g_oplusCountryPwrLimit[] = {
     {23083, sizeof(g_rRlmPowerLimitConfiguration_23083)/sizeof(g_rRlmPowerLimitConfiguration_23083[0]), g_rRlmPowerLimitConfiguration_23083},
     {23281, sizeof(g_rRlmPowerLimitConfiguration_23281)/sizeof(g_rRlmPowerLimitConfiguration_23281[0]), g_rRlmPowerLimitConfiguration_23281},
     {23282, sizeof(g_rRlmPowerLimitConfiguration_23281)/sizeof(g_rRlmPowerLimitConfiguration_23281[0]), g_rRlmPowerLimitConfiguration_23281},
+    {24231, sizeof(g_rRlmPowerLimitConfiguration_24231)/sizeof(g_rRlmPowerLimitConfiguration_24231[0]), g_rRlmPowerLimitConfiguration_24231},
+    {24234, sizeof(g_rRlmPowerLimitConfiguration_24231)/sizeof(g_rRlmPowerLimitConfiguration_24231[0]), g_rRlmPowerLimitConfiguration_24231},
 };
 /*
 struct oplus_country_pwr_limit_he g_oplusCountryPwrLimitHe[] = {
@@ -1360,6 +1362,8 @@ struct oplus_country_pwr_limit_default g_oplusCountryPwrLimitDefault[] = {
     {23083, sizeof(g_rRlmPowerLimitDefault_23083)/sizeof(g_rRlmPowerLimitDefault_23083[0]), g_rRlmPowerLimitDefault_23083},
     {23281, sizeof(g_rRlmPowerLimitDefault_23281)/sizeof(g_rRlmPowerLimitDefault_23281[0]), g_rRlmPowerLimitDefault_23281},
     {23282, sizeof(g_rRlmPowerLimitDefault_23281)/sizeof(g_rRlmPowerLimitDefault_23281[0]), g_rRlmPowerLimitDefault_23281},
+    {24231, sizeof(g_rRlmPowerLimitDefault_24231)/sizeof(g_rRlmPowerLimitDefault_24231[0]), g_rRlmPowerLimitDefault_24231},
+    {24234, sizeof(g_rRlmPowerLimitDefault_24231)/sizeof(g_rRlmPowerLimitDefault_24231[0]), g_rRlmPowerLimitDefault_24231},
 };
 #endif /*OPLUS_FEATURE_WIFI_POWER */
 //#ifdef OPLUS_BUG_COMPATIBILITY

@@ -1,7 +1,7 @@
 /*
 * Copyright (C) 2021 Oplus Inc.
 *
-* WIFI.BASIC.HARDWARE @chanbolun@oplus.com
+* WIFI.BASIC.HARDWARE @chanbolun
 * 
 * Use for get wifi channel configuration from storage instead of memory
 */

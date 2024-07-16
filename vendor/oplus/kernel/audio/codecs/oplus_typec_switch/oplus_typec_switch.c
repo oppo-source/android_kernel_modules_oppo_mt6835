@@ -81,6 +81,8 @@ struct typec_switch_priv {
 
 	/* 2024/1/8, add for supporting type-c headphone detect bypass */
 	bool hp_bypass;
+	struct delayed_work typec_ext_eint_work;
+
 	int charger_plugged;
 	struct completion resume_ack;
 };
@@ -88,12 +90,14 @@ struct typec_switch_priv {
 /* 2024/1/8, add for supporting type-c headphone detect bypass */
 int (*ptypec_ext_eint_handler)(void) = NULL;
 
-void typec_ext_eint_handler(void)
+int typec_ext_eint_handler(void)
 {
     if (ptypec_ext_eint_handler) {
         ptypec_ext_eint_handler();
+        return 0;
     } else {
         pr_err("ext_eint_handler not register");
+        return -1;
     }
 }
 
@@ -878,7 +882,9 @@ static int typec_switch_usbc_analog_setup_switches(struct typec_switch_priv *swi
 #ifdef OPLUS_ARCH_EXTENDS
 /* 2024/1/8, add for supporting type-c headphone detect bypass */
 		if (switch_priv->hp_bypass) {
-			typec_ext_eint_handler();
+			if (typec_ext_eint_handler()) {
+				schedule_delayed_work(&switch_priv->typec_ext_eint_work, msecs_to_jiffies(1000));
+			}
 		} else {
 #endif /*OPLUS_ARCH_EXTENDS*/
 		if (gpio_is_valid(switch_priv->hs_det_pin)) {
@@ -906,6 +912,7 @@ static int typec_switch_usbc_analog_setup_switches(struct typec_switch_priv *swi
 #ifdef OPLUS_ARCH_EXTENDS
 /* 2024/1/8, add for supporting type-c headphone detect bypass */
 		if (switch_priv->hp_bypass) {
+			cancel_delayed_work(&switch_priv->typec_ext_eint_work);
 			typec_ext_eint_handler();
 		} else {
 #endif /*OPLUS_ARCH_EXTENDS*/
@@ -1340,6 +1347,26 @@ static void hp_work_callback(struct work_struct *work)
 		pr_info("%s: TYPEC_ATTACHED_AUDIO is not inserted\n", __func__);
 	}
 }
+
+static void typec_ext_eint_work_callback(struct work_struct *work)
+{
+	struct typec_switch_priv *switch_priv = g_typec_switch_priv;
+
+	pr_info("%s: headphone is inserted already\n", __func__);
+
+	if (tcpm_inquire_typec_attach_state(switch_priv->tcpc_dev) == TYPEC_ATTACHED_AUDIO) {
+		pr_info("%s: TYPEC_ATTACHED_AUDIO is inserted\n", __func__);
+		switch_priv->plug_state = true;
+		pm_stay_awake(switch_priv->dev);
+		cancel_work_sync(&switch_priv->usbc_analog_work);
+		schedule_work(&switch_priv->usbc_analog_work);
+	} else if (tcpm_inquire_typec_attach_state(switch_priv->tcpc_dev) == TYPEC_ATTACHED_SNK) {
+		pr_info("%s: SNK has been inserted\n", __func__);
+	} else {
+		pr_info("%s: TYPEC_ATTACHED_AUDIO is not inserted\n", __func__);
+	}
+}
+
 #endif
 
 #if IS_ENABLED(CONFIG_OPLUS_MTK_HEADSET_RECHECK)
@@ -1616,6 +1643,9 @@ static int typec_switch_probe(struct i2c_client *i2c)
 	INIT_DELAYED_WORK(&switch_priv->hp_plugout_check_work, hp_plugout_check_callback);
 	#endif /* CONFIG_OPLUS_MTK_HEADSET_RECHECK */
 
+	if (switch_priv->hp_bypass) {
+		INIT_DELAYED_WORK(&switch_priv->typec_ext_eint_work, typec_ext_eint_work_callback);
+	}
 	dev_info(switch_priv->dev, "probed successfully!\n");
 
 	return 0;

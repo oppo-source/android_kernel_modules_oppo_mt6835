@@ -1160,10 +1160,8 @@ static ssize_t oplus_display_set_osc(struct kobject *kobj,
 	struct drm_crtc *crtc;
 	unsigned int temp_save = 0;
 	int ret = 0;
-	int prj_id = 0;
 	struct drm_device *ddev = get_drm_device();
 
-	prj_id = get_project();
 	ret = kstrtouint(buf, 10, &temp_save);
 	printk(KERN_INFO "osc mode = %d\n", temp_save);
 
@@ -1175,7 +1173,7 @@ static ssize_t oplus_display_set_osc(struct kobject *kobj,
 	}
 
 	oplus_display_check_register();
-	if (prj_id  == 23281 || prj_id == 23282)
+	if (0)
 		mtk_crtc_osc_freq_switch(crtc, temp_save, 0);
 	osc_mode = temp_save;
 

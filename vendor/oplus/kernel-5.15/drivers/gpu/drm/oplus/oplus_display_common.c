@@ -722,6 +722,6 @@ int oplus_display_panel_get_panel_type(void *buf)
 	return 0;
 }
 
-MODULE_AUTHOR("Xiaolei Gao <gaoxiaolei@oppo.com>");
+MODULE_AUTHOR("Xiaolei Gao");
 MODULE_DESCRIPTION("OPPO common device");
 MODULE_LICENSE("GPL v2");

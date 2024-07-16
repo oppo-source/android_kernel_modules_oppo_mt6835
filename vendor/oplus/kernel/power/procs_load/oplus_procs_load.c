@@ -311,5 +311,5 @@ err1:
 early_initcall(procs_cpu_usage_init);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("xieshaohua <xieshaohua@oppo.com>");
+MODULE_AUTHOR("xieshaohua");
 MODULE_DESCRIPTION("process cpu usage stats for power");

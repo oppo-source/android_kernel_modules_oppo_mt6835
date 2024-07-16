@@ -66,7 +66,7 @@
 #define FTS_REG_SAMSUNG_SPECIFAL                0xFA
 #define FTS_REG_HEALTH_1                        0xFD
 #define FTS_REG_HEALTH_2                        0xFE
-
+#define FTS_REG_TEMPERATURE                     0x97
 
 #define FTS_MAX_POINTS_SUPPORT                  10
 #define FTS_MAX_ID                              0x0A
@@ -232,7 +232,7 @@ struct chip_data_ft3518 {
 	int *panel_differ_raw;
 	int *rawdata_linearity;
 	int tp_index;
-
+	int tp_temperature;
 	char *test_limit_name;
 	char *fw_name;
 
