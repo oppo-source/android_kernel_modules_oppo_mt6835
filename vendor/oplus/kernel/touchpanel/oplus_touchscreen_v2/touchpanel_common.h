@@ -327,6 +327,8 @@ typedef enum lcd_event_type {
 	LCD_CTL_TP_FPS240,
 	LCD_CTL_CS_ON,
 	LCD_CTL_CS_OFF,
+	LCD_CTL_IRQ_ON,
+	LCD_CTL_IRQ_OFF,
 } lcd_event_type;
 
 typedef enum {

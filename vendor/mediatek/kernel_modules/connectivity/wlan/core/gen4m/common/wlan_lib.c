@@ -2911,7 +2911,7 @@ void wlanClearRxToOsQueue(struct ADAPTER *prAdapter)
 	QUEUE_REMOVE_HEAD(prTempRxQue, prQueueEntry,
 			  struct QUE_ENTRY *);
 	while (prQueueEntry) {
-		kalPacketFree(prAdapter->prGlueInfo,
+		kalRxIndicateOnePkt(prAdapter->prGlueInfo,
 				(void *) GLUE_GET_PKT_DESCRIPTOR(prQueueEntry));
 		QUEUE_REMOVE_HEAD(prTempRxQue, prQueueEntry,
 				struct QUE_ENTRY *);

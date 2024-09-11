@@ -1262,7 +1262,9 @@ void nicRxProcessPktWithoutReorder(struct ADAPTER
 	}
 
 #if CFG_SUPPORT_MULTITHREAD
-	if (HAL_IS_RX_DIRECT(prAdapter)) {
+	if (HAL_IS_RX_DIRECT(prAdapter)
+		|| kalRxNapiValidSkb(prAdapter->prGlueInfo, prSwRfb->pvPacket)
+		) {
 		kalRxIndicateOnePkt(prAdapter->prGlueInfo, prSwRfb->pvPacket);
 		if (fgIsRetained)
 			RX_ADD_CNT(prRxCtrl, RX_DATA_RETAINED_COUNT, 1);

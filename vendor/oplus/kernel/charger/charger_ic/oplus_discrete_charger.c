@@ -1749,6 +1749,7 @@ int oplus_sm8150_get_pd_type(void)
 	return PD_INACTIVE;
 }
 
+#define PD_SWITCH_POLICY_DELAY_MS 100
 static int oplus_pdc_setup(int *vbus_mv, int *ibus_ma)
 {
 	int ret = 0;
@@ -1761,6 +1762,12 @@ static int oplus_pdc_setup(int *vbus_mv, int *ibus_ma)
 		printk(KERN_ERR "%s:get type_c_port0 fail\n", __func__);
 		return -EINVAL;
 	}
+	ret = tcpm_set_pd_charging_policy(tcpc, DPM_CHARGING_POLICY_MAX_POWER_LVIC, NULL);
+	if (ret != TCPM_SUCCESS) {
+		printk(KERN_ERR "%s: tcpm_set_apdo_charging_policy fail\n", __func__);
+		return -EINVAL;
+	}
+	msleep(PD_SWITCH_POLICY_DELAY_MS);
 
 	ret = tcpm_dpm_pd_request(tcpc, *vbus_mv, *ibus_ma, NULL);
 	if (ret != TCPM_SUCCESS) {
@@ -1912,8 +1919,8 @@ int oplus_chg_set_pd_config(void)
 			return -1;
 		}
 	} else {
-		if (chip->limits.vbatt_pdqc_to_5v_thr > 0 && chip->charger_volt > VBUS_9V_THR_MV
-			&& chip->batt_volt > chip->limits.vbatt_pdqc_to_5v_thr) {
+		if (((chip->limits.vbatt_pdqc_to_5v_thr > 0 && chip->batt_volt > chip->limits.vbatt_pdqc_to_5v_thr)
+		    || chip->cool_down_force_5v) && chip->charger_volt > VBUS_9V_THR_MV) {
 			chip->chg_ops->input_current_write(PDO_9V_TO_5V_IBUS_MA);
 			oplus_chg_suspend_charger();
 			oplus_chg_config_charger_vsys_threshold(0x03);//set Vsys Skip threshold 101%
@@ -1934,7 +1941,7 @@ int oplus_chg_set_pd_config(void)
 			msleep(REQUEST_PDO_DELAY_MS);
 			printk(KERN_ERR "%s: charger voltage=%d", __func__, qpnp_get_prop_charger_voltage_now());
 			oplus_chg_unsuspend_charger();
-		} else if (chip->batt_volt < chip->limits.vbatt_pdqc_to_9v_thr) {
+		} else if (chip->batt_volt < chip->limits.vbatt_pdqc_to_9v_thr && !chip->cool_down_force_5v) {
 			oplus_voocphy_set_pdqc_config();
 			oplus_chg_suspend_charger();
 			oplus_chg_config_charger_vsys_threshold(0x02);//set Vsys Skip threshold 104%

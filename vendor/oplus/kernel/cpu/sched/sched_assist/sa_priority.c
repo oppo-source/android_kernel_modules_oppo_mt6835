@@ -518,6 +518,7 @@ void android_vh_sched_stat_runtime_handler(void *unused, struct task_struct *tas
 	}
 
 	spin_lock_irqsave(orq->ux_list_lock, irqflag);
+	smp_mb__after_spinlock();
 	if (!oplus_rbnode_empty(&ots->ux_entry)) {
 		unsigned int limit;
 

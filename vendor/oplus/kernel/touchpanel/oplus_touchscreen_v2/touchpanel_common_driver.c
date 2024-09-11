@@ -143,6 +143,7 @@ static void lcd_tp_refresh_work(struct work_struct *work);
 static void tp_ftm_extra(unsigned int tp_index);
 static int tp_control_reset_gpio(bool enable, unsigned int tp_index);
 static int tp_control_cs_gpio(bool enable, unsigned int tp_index);
+static int tp_control_irq_gpio(bool enable, unsigned int tp_index);
 static void lcd_tp_load_fw(unsigned int tp_index);
 static void lcd_tp_refresh_switch(unsigned int tp_index, int fps);
 static void tp_suspend_work(struct work_struct *work);
@@ -4895,8 +4896,11 @@ static void lcd_other_event(int *blank, struct touchpanel_data *ts)
 		tp_control_cs_gpio(1, ts->tp_index);
 	} else if (*blank == LCD_CTL_CS_OFF) {
 		tp_control_cs_gpio(0, ts->tp_index);
+	} else if (*blank == LCD_CTL_IRQ_ON) {
+		tp_control_irq_gpio(1, ts->tp_index);
+	} else if (*blank == LCD_CTL_IRQ_OFF) {
+		tp_control_irq_gpio(0, ts->tp_index);
 	}
-
 };
 
 #if IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
@@ -5490,6 +5494,33 @@ static int tp_control_cs_gpio(bool enable, unsigned int tp_index)
 
 	return 0;
 }
+
+static int tp_control_irq_gpio(bool enable, unsigned int tp_index)
+{
+	struct touchpanel_data *ts = NULL;
+
+	if (tp_index >= TP_SUPPORT_MAX) {
+		return 0;
+	}
+	ts = get_ts_data(tp_index);
+
+	if (!ts) {
+		return 0;
+	}
+
+	TP_INFO(ts->tp_index, "%s %d, %s ts->irq=%d\n", __func__, enable,
+		enable ? "enable" : "disable", ts->irq);
+	if (enable == 1) {
+		enable_irq(ts->irq);
+		TP_INFO(ts->tp_index, "%s: enable_irq.\n", __func__);
+	} else {
+		disable_irq_nosync(ts->irq);
+		TP_INFO(ts->tp_index, "%s: disable_irq_nosync.\n", __func__);
+	}
+
+	return 0;
+}
+
 #endif/*CONFIG_FB*/
 
 /**

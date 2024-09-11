@@ -224,7 +224,7 @@ static const uint16_t g_u2CountryGroup3[] = {
 	COUNTRY_CODE_MO, COUNTRY_CODE_IR, COUNTRY_CODE_IN, COUNTRY_CODE_PK,
 	COUNTRY_CODE_LK, COUNTRY_CODE_JO, COUNTRY_CODE_AE, COUNTRY_CODE_KH,
 	COUNTRY_CODE_MM, COUNTRY_CODE_BD, COUNTRY_CODE_NZ, COUNTRY_CODE_TH,
-	COUNTRY_CODE_IL, COUNTRY_CODE_TZ, COUNTRY_CODE_ZM
+	COUNTRY_CODE_IL, COUNTRY_CODE_TZ, COUNTRY_CODE_ZM, COUNTRY_CODE_BH
 };
 
 static const uint16_t g_u2CountryGroup4[] = {
@@ -241,7 +241,7 @@ static const uint16_t g_u2CountryGroup6[] = { COUNTRY_CODE_RU };
 
 static const uint16_t g_u2CountryGroup7[] = {
 	COUNTRY_CODE_AG, COUNTRY_CODE_BS, COUNTRY_CODE_NP,
-	COUNTRY_CODE_BH, COUNTRY_CODE_BB, COUNTRY_CODE_BN, COUNTRY_CODE_MV,
+	COUNTRY_CODE_BB, COUNTRY_CODE_BN, COUNTRY_CODE_MV,
 	COUNTRY_CODE_CN
 };
 
@@ -1307,7 +1307,9 @@ struct oplus_country_pwr_limit g_oplusCountryPwrLimit[] = {
     {23083, sizeof(g_rRlmPowerLimitConfiguration_23083)/sizeof(g_rRlmPowerLimitConfiguration_23083[0]), g_rRlmPowerLimitConfiguration_23083},
     {23281, sizeof(g_rRlmPowerLimitConfiguration_23281)/sizeof(g_rRlmPowerLimitConfiguration_23281[0]), g_rRlmPowerLimitConfiguration_23281},
     {23282, sizeof(g_rRlmPowerLimitConfiguration_23281)/sizeof(g_rRlmPowerLimitConfiguration_23281[0]), g_rRlmPowerLimitConfiguration_23281},
+    {24031, sizeof(g_rRlmPowerLimitConfiguration_24031)/sizeof(g_rRlmPowerLimitConfiguration_24031[0]), g_rRlmPowerLimitConfiguration_24031},
     {24231, sizeof(g_rRlmPowerLimitConfiguration_24231)/sizeof(g_rRlmPowerLimitConfiguration_24231[0]), g_rRlmPowerLimitConfiguration_24231},
+    {24232, sizeof(g_rRlmPowerLimitConfiguration_24232)/sizeof(g_rRlmPowerLimitConfiguration_24232[0]), g_rRlmPowerLimitConfiguration_24232},
     {24234, sizeof(g_rRlmPowerLimitConfiguration_24231)/sizeof(g_rRlmPowerLimitConfiguration_24231[0]), g_rRlmPowerLimitConfiguration_24231},
 };
 /*
@@ -1363,6 +1365,7 @@ struct oplus_country_pwr_limit_default g_oplusCountryPwrLimitDefault[] = {
     {23281, sizeof(g_rRlmPowerLimitDefault_23281)/sizeof(g_rRlmPowerLimitDefault_23281[0]), g_rRlmPowerLimitDefault_23281},
     {23282, sizeof(g_rRlmPowerLimitDefault_23281)/sizeof(g_rRlmPowerLimitDefault_23281[0]), g_rRlmPowerLimitDefault_23281},
     {24231, sizeof(g_rRlmPowerLimitDefault_24231)/sizeof(g_rRlmPowerLimitDefault_24231[0]), g_rRlmPowerLimitDefault_24231},
+    {24232, sizeof(g_rRlmPowerLimitDefault_24232)/sizeof(g_rRlmPowerLimitDefault_24232[0]), g_rRlmPowerLimitDefault_24232},
     {24234, sizeof(g_rRlmPowerLimitDefault_24231)/sizeof(g_rRlmPowerLimitDefault_24231[0]), g_rRlmPowerLimitDefault_24231},
 };
 #endif /*OPLUS_FEATURE_WIFI_POWER */
