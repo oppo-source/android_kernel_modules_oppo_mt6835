@@ -181,6 +181,7 @@ ccflags-y:=$(filter-out -USOC2_1X1,$(ccflags-y))
 ccflags-y += -DSOC2_1X1
 ccflags-y += -DCONFIG_MTK_WIFI_VHT80
 ifneq ($(filter 6835, $(WLAN_CHIP_ID)),)
+        CONFIG_RX_NAPI_THREADED=y
 	ccflags-y += -DCFG_WLAN_LK_FWDL_SUPPORT=1
 	ccflags-y += -DCFG_WLAN_ATF_SUPPORT=0
 endif
@@ -683,6 +684,12 @@ ifeq ($(CONFIG_MTK_WIFI_CONNAC2X_2x2), y)
     ccflags-y += -DCFG_SUPPORT_CONNAC2X_2x2=1
 else
     ccflags-y += -DCFG_SUPPORT_CONNAC2X_2x2=0
+endif
+
+ifeq ($(CONFIG_RX_NAPI_THREADED), y)
+    ccflags-y += -DCFG_SUPPORT_RX_NAPI_THREADED=1
+else
+    ccflags-y += -DCFG_SUPPORT_RX_NAPI_THREADED=0
 endif
 
 ifeq ($(CONFIG_MTK_WIFI_CONNAC3X), y)
