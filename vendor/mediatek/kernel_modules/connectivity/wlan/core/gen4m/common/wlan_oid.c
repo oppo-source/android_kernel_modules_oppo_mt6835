@@ -10847,6 +10847,10 @@ wlanSendSetQueryCmdAdv(struct ADAPTER *prAdapter,
 
 	switch (eMethod) {
 	case CMD_SEND_METHOD_ENQUEUE:
+		if (prCmdInfo->fgIsOid) {
+			prGlueInfo->OidEntry.prCmdInfo = prCmdInfo;
+			DBGLOG(NIC, LOUD, "prIoReq->prCmdInfo=%p", prCmdInfo);
+		}
 		/* insert into prCmdQueue */
 		kalEnqueueCommand(prGlueInfo,
 				  (struct QUE_ENTRY *) prCmdInfo);

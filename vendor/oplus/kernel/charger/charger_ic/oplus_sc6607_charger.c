@@ -2631,6 +2631,7 @@ static int sc6607_hk_irq_handle(struct sc6607 *chip)
 		chip->bc12.detect_ing = false;
 		mutex_unlock(&chip->bc12.running_lock);
 		chip->usb_connect_start = false;
+		chip->bc12_done = false;
 		chip->is_force_dpdm = false;
 		chip->soft_bc12_type = SC6607_VBUS_TYPE_NONE;
 		chip->chg_type = CHARGER_UNKNOWN;

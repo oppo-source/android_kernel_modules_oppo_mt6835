@@ -533,6 +533,7 @@ struct mtk_charger {
 	struct iio_channel	*usb_btb_temp_chan;
 	struct iio_channel	*master_cp_chan;
 	struct iio_channel	*slave_cp_chan;
+	struct iio_channel	*vbus_chan;
 
 #ifdef CONFIG_THERMAL
 	struct thermal_zone_device *master_cp_temp_tzd;

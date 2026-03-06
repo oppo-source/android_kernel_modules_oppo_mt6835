@@ -110,6 +110,7 @@ struct oplus_mms_gauge {
 	struct delayed_work gauge_nvram_stress_test_work;
 	struct delayed_work gauge_stress_read_test_work;
 	struct delayed_work gauge_term_volt_stress_test_work;
+	struct delayed_work check_imp_model_work;
 
 	struct votable *gauge_update_votable;
 	struct deep_dischg_spec deep_spec;
@@ -127,6 +128,9 @@ struct oplus_mms_gauge {
 	int check_batt_vol_count;
 	bool pd_svooc;
 	bool bat_volt_different;
+
+	bool check_imp_model_done;
+	struct votable *wired_charging_disable_votable;
 
 	bool factory_test_mode;
 	bool wired_online;

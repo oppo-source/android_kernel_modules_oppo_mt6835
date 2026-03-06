@@ -133,6 +133,7 @@ struct oplus_chg_wired {
 	struct delayed_work retention_disconnect_work;
 	struct delayed_work switch_end_recheck_work;
 	struct delayed_work pd_config_work;
+	struct delayed_work source_pdo_work;
 	struct delayed_work qc_config_work;
 	struct delayed_work pd_boost_icl_disable_work;
 	struct delayed_work common_power_check_recover_work;
@@ -182,6 +183,7 @@ struct oplus_chg_wired {
 	bool pdqc12v_support;
 	bool charging_disable;
 
+	int pdo_volt;
 	int chg_type;
 	int vbus_set_mv;
 	int vbus_mv;
@@ -525,8 +527,14 @@ static int oplus_wired_current_set(struct oplus_chg_wired *chip,
 	case OPLUS_CHG_USB_TYPE_ACA:
 	case OPLUS_CHG_USB_TYPE_C:
 	case OPLUS_CHG_USB_TYPE_APPLE_BRICK_ID:
-	case OPLUS_CHG_USB_TYPE_PD_SDP:
 		chip->chg_mode = OPLUS_WIRED_CHG_MODE_DCP;
+		break;
+	case OPLUS_CHG_USB_TYPE_PD_SDP:
+		if (chip->pdo_volt > 0)
+			chip->chg_mode = (chip->vbus_status == VBUS_STS_12V_RDY) ?
+			OPLUS_WIRED_CHG_MODE_PD12V : OPLUS_WIRED_CHG_MODE_PD;
+		else
+			chip->chg_mode = OPLUS_WIRED_CHG_MODE_DCP;
 		break;
 	case OPLUS_CHG_USB_TYPE_QC2:
 	case OPLUS_CHG_USB_TYPE_QC3:
@@ -636,7 +644,12 @@ static int oplus_wired_current_set(struct oplus_chg_wired *chip,
 	mutex_lock(&chip->current_lock);
 	icl_tmp_ma = get_effective_result(chip->icl_votable);
 	vote(chip->fcc_votable, SPEC_VOTER, true, fcc_ma, false);
-	vote(chip->icl_votable, SPEC_VOTER, true, icl_ma, true);
+	if ((oplus_comm_get_boot_completed() == false) &&
+		(chip->chg_mode == OPLUS_WIRED_CHG_MODE_UNKNOWN) &&
+		!oplus_is_power_off_charging())
+		chg_info("dont set icl=500ma, keep icl setting in lk/uefi");
+	else
+		vote(chip->icl_votable, SPEC_VOTER, true, icl_ma, true);
 	if (!chip->authenticate || !chip->hmac) {
 		vote(chip->fcc_votable, NON_STANDARD_VOTER, true,
 		     spec->non_standard_ibatmax_ma, false);
@@ -652,7 +665,7 @@ static int oplus_wired_current_set(struct oplus_chg_wired *chip,
 		if (!rc)
 			led_on = !!data.intval;
 	}
-	if (led_on && cool_down_curr > 0) {
+	if (cool_down_curr > 0) {
 		if (chip->chg_ctrl_by_sale_mode &&
 		    (chip->chg_mode == OPLUS_WIRED_CHG_MODE_QC ||
 		    chip->chg_mode == OPLUS_WIRED_CHG_MODE_PD))
@@ -1164,7 +1177,8 @@ static void oplus_wired_pd_config_work(struct work_struct *work)
 		goto set_curr;
 	}
 
-	if (chip->cpa_support) {
+
+	if (chip->cpa_support && chip->chg_type != OPLUS_CHG_USB_TYPE_PD_SDP) {
 		oplus_mms_get_item_data(chip->cpa_topic, CPA_ITEM_ALLOW, &data, false);
 		if (data.intval != CHG_PROTOCOL_PD) {
 			chg_err("switched to other protocol, not change vbus.");
@@ -1486,6 +1500,21 @@ static void oplus_wired_subscribe_gauge_topic(struct oplus_mms *topic,
 	chg_info("hmac=%d, authenticate=%d\n", chip->hmac, chip->authenticate);
 }
 
+static void oplus_wired_source_pdo_work(struct work_struct *work)
+{
+	struct oplus_chg_wired *chip =
+		container_of(work, struct oplus_chg_wired, source_pdo_work.work);
+
+	chg_info("source_pdo_work:pdo_volt:%d, chg_type:%d\n", chip->pdo_volt, chip->chg_type);
+	if (chip->pdo_volt == OPLUS_CHG_VBUS_9V && chip->chg_type == OPLUS_CHG_USB_TYPE_PD_SDP) {
+		chip->chg_mode = OPLUS_WIRED_CHG_MODE_PD;
+		chip->pd_action = OPLUS_ACTION_BOOST;
+		schedule_delayed_work(&chip->pd_config_work, 0);
+		chg_info("requese 9v");
+		chg_info("schedule pd_config_work:pd_action:%d\n", chip->pd_action);
+	}
+}
+
 static void oplus_wired_wired_subs_callback(struct mms_subscribe *subs,
 					    enum mms_msg_type type, u32 id, bool sync)
 {
@@ -1544,6 +1573,11 @@ static void oplus_wired_wired_subs_callback(struct mms_subscribe *subs,
 			oplus_mms_get_item_data(chip->wired_topic, id, &data, false);
 			chip->charging_disable = !!data.intval;
 			schedule_work(&chip->chg_status_buckboost_work);
+			break;
+		case WIRED_ITEM_SOURCE_PDO_VOLT:
+			oplus_mms_get_item_data(chip->wired_topic, id, &data, false);
+			chip->pdo_volt = data.intval;
+			schedule_delayed_work(&chip->source_pdo_work, 0);
 			break;
 		default:
 			break;
@@ -1629,6 +1663,7 @@ static void oplus_wired_plugin_work(struct work_struct *work)
 		container_of(work, struct oplus_chg_wired, plugin_work);
 	union mms_msg_data data = { 0 };
 	int i = 0;
+	bool present = false;
 #ifdef CONFIG_OPLUS_CHARGER_MTK
 	int boot_mode = 0;
 
@@ -1637,7 +1672,10 @@ static void oplus_wired_plugin_work(struct work_struct *work)
 	oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_ONLINE, &data,
 				false);
 	chip->chg_online = data.intval;
-	if (chip->chg_online) {
+	chg_info("chg_online = %d\n", chip->chg_online);
+	present = oplus_wired_is_present();
+	chg_info("present = %d\n", present);
+	if (present) {
 		oplus_gauge_set_plugin_status();
 		oplus_common_power_check(chip);
 		chip->retention_state_ready = false;
@@ -1719,6 +1757,7 @@ static void oplus_wired_plugin_work(struct work_struct *work)
 			     false);
 
 		/* Force open charging */
+		chg_info("force open charging!\n");
 		vote_override(chip->output_suspend_votable, OVERRIDE_VOTER, true, 0, false);
 		vote_override(chip->input_suspend_votable, OVERRIDE_VOTER, true, 0, false);
 		vote(chip->icl_votable, SPEC_VOTER, true, 500, true);
@@ -1734,6 +1773,10 @@ static void oplus_wired_plugin_work(struct work_struct *work)
 #endif
 	}
 
+	oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_ONLINE, &data,
+				false);
+	chip->chg_online = data.intval;
+	chg_info("chg_online = %d\n", chip->chg_online);
 	if (chip->gauge_topic != NULL)
 		oplus_mms_topic_update(chip->gauge_topic, true);
 }
@@ -1772,6 +1815,18 @@ static void oplus_wired_chg_type_change_work(struct work_struct *work)
 			OPLUS_WIRED_CHG_MODE_PD12V : OPLUS_WIRED_CHG_MODE_PD;
 		chip->pd_action = OPLUS_ACTION_BOOST;
 		schedule_delayed_work(&chip->pd_config_work, 0);
+		break;
+	case OPLUS_CHG_USB_TYPE_PD_SDP:
+		if (chip->pdo_volt > 0) {
+			chip->chg_mode = OPLUS_WIRED_CHG_MODE_PD;
+			if (chip->pdo_volt == OPLUS_CHG_VBUS_9V)
+				chip->pd_action = OPLUS_ACTION_BOOST;
+			else
+				chip->pd_action = OPLUS_ACTION_BUCK;
+			schedule_delayed_work(&chip->pd_config_work, 0);
+			chg_info("chg_mode:%d\n", chip->chg_mode);
+			chg_info("schedule pd_config_work:pd_action:%d\n", chip->pd_action);
+		}
 		break;
 	default:
 		oplus_wired_current_set(chip, false);
@@ -1951,7 +2006,7 @@ static void oplus_pdqc_retention_disconnect_work(struct work_struct *work)
 
 	oplus_mms_get_item_data(chip->retention_topic, RETENTION_ITEM_DISCONNECT_COUNT, &data, true);
 	chip->pdqc_connect_error_count = data.intval;
-	chg_debug("cpa_current_type= %d, pdqc_connect_error_count =%d\n",
+	chg_info("cpa_current_type= %d, pdqc_connect_error_count =%d\n",
 		chip->cpa_current_type, chip->pdqc_connect_error_count);
 	if (chip->pdqc_connect_error_count > DPQC_CONNECT_ERROR_COUNT_LEVEL ||
 		(!chip->irq_plugin && chip->pdqc_connect_error_count >= DPQC_CONNECT_ERROR_COUNT_LEVEL)) {
@@ -2901,6 +2956,7 @@ static void oplus_wired_shutdown(struct platform_device *pdev)
 	case OPLUS_CHG_USB_TYPE_PD:
 	case OPLUS_CHG_USB_TYPE_PD_DRP:
 	case OPLUS_CHG_USB_TYPE_PD_PPS:
+	case OPLUS_CHG_USB_TYPE_PD_SDP:
 		if (chip->chg_mode == OPLUS_WIRED_CHG_MODE_PD ||
 		    chip->chg_mode == OPLUS_WIRED_CHG_MODE_PD12V) {
 			oplus_wired_set_pd_config(OPLUS_PD_5V_PDO);
@@ -2964,6 +3020,7 @@ static int oplus_wired_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&chip->pd_boost_icl_disable_work, oplus_wired_pd_boost_icl_disable_work);
 	INIT_DELAYED_WORK(&chip->qc_config_work, oplus_wired_qc_config_work);
 	INIT_DELAYED_WORK(&chip->pd_config_work, oplus_wired_pd_config_work);
+	INIT_DELAYED_WORK(&chip->source_pdo_work, oplus_wired_source_pdo_work);
 	INIT_DELAYED_WORK(&chip->retention_disconnect_work,
 		  oplus_pdqc_retention_disconnect_work);
 	INIT_DELAYED_WORK(&chip->common_power_check_recover_work, oplus_common_power_check_recover_work);

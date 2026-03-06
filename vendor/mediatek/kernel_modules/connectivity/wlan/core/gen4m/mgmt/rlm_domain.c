@@ -1378,6 +1378,7 @@ struct oplus_country_pwr_limit g_oplusCountryPwrLimit[] = {
     {24366, sizeof(g_rRlmPowerLimitConfiguration_24094)/sizeof(g_rRlmPowerLimitConfiguration_24094[0]), g_rRlmPowerLimitConfiguration_24094},
     {25291, sizeof(g_rRlmPowerLimitConfiguration_25291)/sizeof(g_rRlmPowerLimitConfiguration_25291[0]), g_rRlmPowerLimitConfiguration_25291},
     {25292, sizeof(g_rRlmPowerLimitConfiguration_25291)/sizeof(g_rRlmPowerLimitConfiguration_25291[0]), g_rRlmPowerLimitConfiguration_25291},
+    {25055, sizeof(g_rRlmPowerLimitConfiguration_25055)/sizeof(g_rRlmPowerLimitConfiguration_25055[0]), g_rRlmPowerLimitConfiguration_25055},
 };
 /*
 struct oplus_country_pwr_limit_he g_oplusCountryPwrLimitHe[] = {
@@ -1502,6 +1503,7 @@ struct oplus_country_pwr_limit_default g_oplusCountryPwrLimitDefault[] = {
     {24366, sizeof(g_rRlmPowerLimitDefault_24094)/sizeof(g_rRlmPowerLimitDefault_24094[0]), g_rRlmPowerLimitDefault_24094},
     {25291, sizeof(g_rRlmPowerLimitDefault_25291)/sizeof(g_rRlmPowerLimitDefault_25291[0]), g_rRlmPowerLimitDefault_25291},
     {25292, sizeof(g_rRlmPowerLimitDefault_25291)/sizeof(g_rRlmPowerLimitDefault_25291[0]), g_rRlmPowerLimitDefault_25291},
+    {25055, sizeof(g_rRlmPowerLimitDefault_25055)/sizeof(g_rRlmPowerLimitDefault_25055[0]), g_rRlmPowerLimitDefault_25055},
 };
 #endif /*OPLUS_FEATURE_WIFI_POWER */
 //#ifdef OPLUS_BUG_COMPATIBILITY

@@ -96,6 +96,7 @@
 #define FLASH_MODE_SAFETY_VOLTAGE	5400
 #define FLASH_MODE_SAFETY_VOLTAGE_DETECT_COUNT		25
 #define FLASH_MODE_SAFETY_VOLTAGE_QUERY_INTERVAL	40
+#define SOC_DOWN_DELAY_FOR_REVERSE_CHARGING		30
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0))
 #define pde_data(inode) PDE_DATA(inode)
@@ -161,6 +162,12 @@ enum dec_cv_support_type {
 	DEC_CV_SUPPORT_LITE,
 	DEC_CV_SUPPORT_FULL,
 	DEC_CV_SUPPORT_MAX,
+};
+
+enum power_role_type {
+	POWER_ROLE_UNKNOWN = -1,
+	POWER_ROLE_SINK = 0,
+	POWER_ROLE_SOURCE = 1,
 };
 
 enum bdd_voltdiff_trend {
@@ -340,6 +347,7 @@ struct oplus_chg_comm {
 	struct work_struct gauge_check_work;
 	struct work_struct plugin_work;
 	struct work_struct chg_type_change_work;
+	struct work_struct chg_power_role_change_work;
 	struct work_struct gauge_remuse_work;
 	struct work_struct noplug_batt_volt_work;
 	struct work_struct wired_chg_check_work;
@@ -405,6 +413,7 @@ struct oplus_chg_comm {
 	bool hw_sub_batt_full_by_sw;
 	bool batt_full;
 	bool sub_batt_full;
+	bool batt_cv_full;
 	bool authenticate;
 	bool hmac;
 	bool gauge_remuse;
@@ -449,6 +458,8 @@ struct oplus_chg_comm {
 	int shutdown_soc;
 	int partition_uisoc;
 	bool need_start_timeout_work;
+	enum power_role_type power_role;
+	enum oplus_wired_cc_detect_status cc_detect_status;
 
 	unsigned int wired_err_code;
 	unsigned int wls_err_code;
@@ -1255,10 +1266,43 @@ static void oplus_comm_set_rechging(struct oplus_chg_comm *chip, bool rechging)
 	}
 }
 
+static void oplus_comm_set_batt_cv_full(struct oplus_chg_comm *chip)
+{
+	bool batt_cv_full;
+	struct mms_msg *msg;
+	int rc;
+
+	if (chip->sw_full || chip->hw_full_by_sw)
+		batt_cv_full = true;
+	else
+		batt_cv_full = false;
+
+	if (chip->batt_cv_full == batt_cv_full)
+		return;
+
+	chip->batt_cv_full = batt_cv_full;
+
+	msg = oplus_mms_alloc_msg(MSG_TYPE_ITEM, MSG_PRIO_HIGH,
+				  COMM_ITEM_BATT_CV_FULL);
+	if (msg == NULL) {
+		chg_err("alloc msg error\n");
+		return;
+	}
+	rc = oplus_mms_publish_msg(chip->comm_topic, msg);
+	if (rc < 0) {
+		chg_err("publish battery cv full msg error, rc=%d\n", rc);
+		kfree(msg);
+	}
+
+	chg_info("batt_cv_full=%s\n", batt_cv_full ? "true" : "false");
+}
+
 static void oplus_comm_set_batt_full(struct oplus_chg_comm *chip, bool full)
 {
 	struct mms_msg *msg;
 	int rc;
+
+	oplus_comm_set_batt_cv_full(chip);
 
 	full |= chip->sw_full || chip->hw_full_by_sw;
 
@@ -3677,6 +3721,8 @@ static void oplus_comm_ui_soc_update(struct oplus_chg_comm *chip)
 	int dex = 0;
 	static unsigned long begin_vbatt_uv_jiffies = 0;
 	int vbat_min = chip->vbat_min_mv;
+	int power_role = chip->power_role;
+	int cc_detect_status = chip->cc_detect_status;
 
 	if (g_ui_soc_ready == false) {
 		chg_err("g_ui_soc_ready is false %d", chip->ui_soc);
@@ -3695,6 +3741,11 @@ static void oplus_comm_ui_soc_update(struct oplus_chg_comm *chip)
 	soc_up_jiffies = chip->soc_up_update_jiffies + (unsigned long)(10 * HZ);
 	soc_down_jiffies = chip->soc_down_update_jiffies +
 		(calculate_soc_down_jiffies(config, ui_soc, charging) * HZ);
+	if (!charging) {
+		if (power_role == POWER_ROLE_SOURCE && cc_detect_status != CC_DETECT_NOTPLUG) {
+			soc_down_jiffies = chip->soc_down_update_jiffies + SOC_DOWN_DELAY_FOR_REVERSE_CHARGING * HZ;
+		}
+	}
 
 	if (chip->config.support_uisoc_low_battery_control)
 		soc_down_jiffies = oplus_comm_ui_soc_low_battery_control(chip, soc_down_jiffies, vbat_min, &force_down_1);
@@ -6156,8 +6207,16 @@ static void oplus_comm_wired_subs_callback(struct mms_subscribe *subs,
 		case WIRED_ITEM_CHG_TYPE:
 			schedule_work(&chip->chg_type_change_work);
 			break;
+		case WIRED_ITEM_POWER_ROLE:
+			schedule_work(&chip->chg_power_role_change_work);
+			break;
 		case WIRED_ITEM_CC_MODE:
+			break;
 		case WIRED_ITEM_CC_DETECT:
+			oplus_mms_get_item_data(chip->wired_topic, id, &data, false);
+			chip->cc_detect_status = data.intval;
+			chg_info("cc_detect_status = %d\n", chip->cc_detect_status);
+			break;
 		default:
 			break;
 		}
@@ -6871,6 +6930,17 @@ static void oplus_comm_chg_type_change_work(struct work_struct *work)
 	schedule_work(&chip->gauge_check_work);
 }
 
+static void oplus_comm_chg_power_role_change_work(struct work_struct *work)
+{
+	struct oplus_chg_comm *chip =
+		container_of(work, struct oplus_chg_comm, chg_power_role_change_work);
+	union mms_msg_data power_role = { -1 };
+	oplus_mms_get_item_data(chip->wired_topic,
+		WIRED_ITEM_POWER_ROLE, &power_role, false);
+	chip->power_role = power_role.intval;
+	chg_info("actual power role = %d", chip->power_role);
+}
+
 int oplus_comm_get_vbatt_over_threshold(struct oplus_mms *topic)
 {
 	struct oplus_chg_comm *chip;
@@ -7032,6 +7102,26 @@ static int oplus_comm_update_chg_sub_batt_full(struct oplus_mms *mms,
 	chip = oplus_mms_get_drvdata(mms);
 
 	data->intval = chip->sub_batt_full;
+
+	return 0;
+}
+
+static int oplus_comm_update_batt_cv_full(struct oplus_mms *mms,
+				       union mms_msg_data *data)
+{
+	struct oplus_chg_comm *chip;
+
+	if (mms == NULL) {
+		chg_err("mms is NULL");
+		return -EINVAL;
+	}
+	if (data == NULL) {
+		chg_err("data is NULL");
+		return -EINVAL;
+	}
+	chip = oplus_mms_get_drvdata(mms);
+
+	data->intval = chip->batt_cv_full;
 
 	return 0;
 }
@@ -7975,6 +8065,16 @@ static struct mms_item oplus_comm_item[] = {
 			.down_thr_enable = false,
 			.dead_thr_enable = false,
 			.update = oplus_comm_wired_update_flash_mode,
+		}
+	},
+	{
+		.desc = {
+			.item_id = COMM_ITEM_BATT_CV_FULL,
+			.str_data = false,
+			.up_thr_enable = false,
+			.down_thr_enable = false,
+			.dead_thr_enable = false,
+			.update = oplus_comm_update_batt_cv_full,
 		}
 	}
 };
@@ -9626,6 +9726,7 @@ static ssize_t proc_hmac_read(struct file *filp, char __user *buff,
 	if (chip == NULL)
 		return -EFAULT;
 
+	chip->hmac = oplus_gauge_get_batt_hmac();
 	if (chip->hmac || chip->config.not_pop_up)
 		buf[0] = '1';
 	else
@@ -10631,6 +10732,7 @@ static int oplus_comm_driver_probe(struct platform_device *pdev)
 	INIT_WORK(&comm_dev->plugin_work, oplus_comm_plugin_work);
 	INIT_WORK(&comm_dev->chg_type_change_work,
 		  oplus_comm_chg_type_change_work);
+	INIT_WORK(&comm_dev->chg_power_role_change_work, oplus_comm_chg_power_role_change_work);
 	INIT_WORK(&comm_dev->gauge_check_work, oplus_comm_gauge_check_work);
 	INIT_WORK(&comm_dev->gauge_remuse_work, oplus_comm_gauge_remuse_work);
 	INIT_WORK(&comm_dev->noplug_batt_volt_work, oplus_comm_noplug_batt_volt_work);

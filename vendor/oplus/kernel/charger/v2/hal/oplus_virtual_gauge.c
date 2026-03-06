@@ -4198,6 +4198,33 @@ static int oplus_chg_vg_mtk_sync_plugin(struct oplus_chg_ic_dev *ic_dev)
 	return rc;
 }
 
+static int oplus_chg_vg_check_imp_model(struct oplus_chg_ic_dev *ic_dev)
+{
+	struct oplus_virtual_gauge_ic *chip;
+	int i;
+	int rc = 0;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+
+	chip = oplus_chg_ic_get_drvdata(ic_dev);
+	for (i = 0; i < chip->child_num; i++) {
+		if (!func_is_support(&chip->child_list[i],
+				     OPLUS_IC_FUNC_GAUGE_CHECK_IMP_MODEL)) {
+			rc = (rc == 0) ? -ENOTSUPP : rc;
+			continue;
+		}
+		rc = oplus_chg_ic_func(chip->child_list[i].ic_dev,
+				       OPLUS_IC_FUNC_GAUGE_CHECK_IMP_MODEL);
+		if (rc < 0)
+			chg_err("child ic[%d] gauge error, rc=%d\n", i, rc);
+	}
+
+	return rc;
+}
+
 static void *oplus_chg_vg_get_func(struct oplus_chg_ic_dev *ic_dev,
 				   enum oplus_chg_ic_func func_id)
 {
@@ -4708,6 +4735,10 @@ static void *oplus_chg_vg_get_func(struct oplus_chg_ic_dev *ic_dev,
 	case OPLUS_IC_FUNC_GAUGE_SYNC_PLUGIN:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_SYNC_PLUGIN,
 			oplus_chg_vg_mtk_sync_plugin);
+		break;
+	case OPLUS_IC_FUNC_GAUGE_CHECK_IMP_MODEL:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_CHECK_IMP_MODEL,
+			oplus_chg_vg_check_imp_model);
 		break;
 	default:
 		chg_err("this func(=%d) is not supported\n", func_id);

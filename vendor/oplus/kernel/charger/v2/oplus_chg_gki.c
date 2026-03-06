@@ -444,6 +444,10 @@ static int usb_psy_get_prop(struct power_supply *psy,
 			rc = -ENOTSUPP;
 		break;
 	case POWER_SUPPLY_PROP_USB_TYPE:
+		if (chip->wired_type == OPLUS_CHG_USB_TYPE_UNKNOWN) {
+			oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_CHG_TYPE, &data, false);
+			chip->wired_type = data.intval;
+		}
 		pval->intval = oplus_to_psy_usb_type[chip->wired_type];
 #if IS_ENABLED(CONFIG_OPLUS_CHG_STATE_KEEP)
 		if (chip->keep_topic)

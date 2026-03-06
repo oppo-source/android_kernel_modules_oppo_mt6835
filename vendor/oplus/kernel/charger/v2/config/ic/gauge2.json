@@ -316,8 +316,27 @@
                 },
                 "overwrite": false
             }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_GAUGE_CHECK_IMP_MODEL",
+            "desc": {
+                "zh": "通知电量计, 去检查电池阻抗模型参数"
+            },
+            "auto_debug_code": true,
+            "parameter_list": [],
+            "parameter_desc": [],
+            "vict": {
+                "read": false,
+                "write": {
+                    "cmd": "vict -f {id} -S vic-*",
+                    "desc": {
+                        "zh": "N/A"
+                    }
+                },
+                "overwrite": false
+            }
         }
     ],
 
-    "version": "V6.1:11:62bb2a4abafd34f37d6973d70b379e98a6872be17ac17d9816bc36568b80c895"
+    "version": "V6.2:12:62f6eed1c07e203a75729f8b21711f707574bdb84db02020b11687df8f851c87"
 }

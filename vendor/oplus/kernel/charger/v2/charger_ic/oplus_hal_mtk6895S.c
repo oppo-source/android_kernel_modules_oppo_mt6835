@@ -580,11 +580,29 @@ int get_vbus(struct mtk_charger *info)
 	return vchr;
 }
 
+#define R_CHARGER_1 330
+#define R_CHARGER_2 39
+
 int battery_meter_get_charger_voltage(void)
 {
+	int vbus_mv = 0;
+	int ret;
+
 	if (!pinfo)
 		return 0;
-	return get_vbus(pinfo);
+
+	if (!IS_ERR_OR_NULL(pinfo->vbus_chan)) {
+		ret = iio_read_channel_processed(pinfo->vbus_chan, &vbus_mv);
+		if (ret < 0) {
+			chg_err("failed to read vbus ,ret=%d\n", ret);
+			return vbus_mv;
+		}
+
+		vbus_mv = (((R_CHARGER_1 + R_CHARGER_2) * 100 * (vbus_mv)) / R_CHARGER_2) / 100;
+		return vbus_mv;
+	} else {
+		return get_vbus(pinfo);
+	}
 }
 
 int get_ibat(struct mtk_charger *info)
@@ -4712,6 +4730,7 @@ static int pd_tcp_notifier_call(struct notifier_block *pnb,
 			cancel_delayed_work_sync(&pinfo->svid_check_work);
 			schedule_delayed_work(&pinfo->svid_check_work, 0);
 			oplus_chg_ic_virq_trigger(pinfo->ic_dev, OPLUS_IC_VIRQ_CHG_TYPE_CHANGE);
+			oplus_chg_ic_virq_trigger(pinfo->ic_dev, OPLUS_IC_VIRQ_PD_COMPLETED);
 			break;
 
 		case PD_CONNECT_PE_READY_SNK_PD30:
@@ -4720,6 +4739,7 @@ static int pd_tcp_notifier_call(struct notifier_block *pnb,
 			cancel_delayed_work_sync(&pinfo->svid_check_work);
 			schedule_delayed_work(&pinfo->svid_check_work, 0);
 			oplus_chg_ic_virq_trigger(pinfo->ic_dev, OPLUS_IC_VIRQ_CHG_TYPE_CHANGE);
+			oplus_chg_ic_virq_trigger(pinfo->ic_dev, OPLUS_IC_VIRQ_PD_COMPLETED);
 			break;
 
 		case PD_CONNECT_PE_READY_SNK_APDO:
@@ -4728,6 +4748,7 @@ static int pd_tcp_notifier_call(struct notifier_block *pnb,
 			cancel_delayed_work_sync(&pinfo->svid_check_work);
 			schedule_delayed_work(&pinfo->svid_check_work, 0);
 			oplus_chg_ic_virq_trigger(pinfo->ic_dev, OPLUS_IC_VIRQ_CHG_TYPE_CHANGE);
+			oplus_chg_ic_virq_trigger(pinfo->ic_dev, OPLUS_IC_VIRQ_PD_COMPLETED);
 			break;
 
 		case PD_CONNECT_TYPEC_ONLY_SNK_DFT:
@@ -4737,6 +4758,7 @@ static int pd_tcp_notifier_call(struct notifier_block *pnb,
 			chr_err("PD Notify Type-C Ready\n");
 			oplus_chg_ic_virq_trigger(pinfo->ic_dev, OPLUS_IC_VIRQ_SVID);/* not support svid */
 			oplus_chg_ic_virq_trigger(pinfo->ic_dev, OPLUS_IC_VIRQ_CHG_TYPE_CHANGE);
+			oplus_chg_ic_virq_trigger(pinfo->ic_dev, OPLUS_IC_VIRQ_PD_COMPLETED);
 			break;
 		}
 		break;
@@ -4744,6 +4766,12 @@ static int pd_tcp_notifier_call(struct notifier_block *pnb,
 		chr_err("old_state=%d, new_state=%d\n",
 				noti->typec_state.old_state,
 				noti->typec_state.new_state);
+		if (noti->typec_state.new_state == TYPEC_ATTACHED_DBGACC_SNK ||
+		    noti->typec_state.new_state == TYPEC_ATTACHED_CUSTOM_SRC ||
+		    noti->typec_state.new_state == TYPEC_ATTACHED_NORP_SRC) {
+			oplus_chg_ic_virq_trigger(pinfo->ic_dev, OPLUS_IC_VIRQ_PD_COMPLETED);
+			chr_err("TYPEC_STATE = DBGACC_SNK || CUSTOM_SRC || NORP_SRC\n");
+		}
 		if (noti->typec_state.old_state == TYPEC_UNATTACHED &&
 			noti->typec_state.new_state == TYPEC_ATTACHED_SRC) {
 			power_supply_changed(pinfo->psy1);
@@ -8908,6 +8936,12 @@ static int mtk_charger_probe(struct platform_device *pdev)
 	if (IS_ERR(pinfo->slave_cp_chan)) {
 		chg_err("Couldn't get slave_cp_chan...\n");
 		pinfo->slave_cp_chan = NULL;
+	}
+
+	pinfo->vbus_chan = devm_iio_channel_get(&pdev->dev, "vbus");
+	if (IS_ERR(pinfo->vbus_chan)) {
+		chg_err("Couldn't get vbus...\n");
+		pinfo->vbus_chan = NULL;
 	}
 
 	pinfo->hvdcp_disable = false;
