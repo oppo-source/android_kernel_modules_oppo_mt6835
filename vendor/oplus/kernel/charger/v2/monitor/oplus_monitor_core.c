@@ -255,10 +255,7 @@ static bool oplus_monitor_all_topic_is_ready(struct oplus_monitor *chip)
 		chg_err("gauge topic not ready\n");
 		return false;
 	}
-	if (!chip->vooc_topic) {
-		chg_err("vooc topic not ready\n");
-		return false;
-	}
+
 	if (!chip->comm_topic) {
 		chg_err("common topic not ready\n");
 		return false;

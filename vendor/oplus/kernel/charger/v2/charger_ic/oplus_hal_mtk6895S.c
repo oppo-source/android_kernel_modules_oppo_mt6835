@@ -534,11 +534,30 @@ int get_vbus(struct mtk_charger *info)
 	return vchr;
 }
 
+#define R_CHARGER_1 330
+#define R_CHARGER_2 39
+
 int battery_meter_get_charger_voltage(void)
 {
+	int vbus_mv = 0;
+	int ret;
+
 	if (!pinfo)
 		return 0;
-	return get_vbus(pinfo);
+
+	if (!IS_ERR_OR_NULL(pinfo->vbus_chan)) {
+		ret = iio_read_channel_processed(pinfo->vbus_chan, &vbus_mv);
+		if (ret < 0) {
+			chg_err("failed to read vbus ,ret=%d\n", ret);
+			return vbus_mv;
+		}
+
+		vbus_mv = (((R_CHARGER_1 + R_CHARGER_2) * 100 * (vbus_mv)) / R_CHARGER_2) / 100;
+
+		return vbus_mv;
+	} else {
+		return get_vbus(pinfo);
+	}
 }
 
 int get_ibat(struct mtk_charger *info)
@@ -7131,7 +7150,9 @@ static struct temp_param sub_board_temp_table[] = {
 	{96,     6132}, {97,     5934}, {98,     5744}, {99,     5561}, {100,    5384}, {101,    5214}, {102,    5051}, {103,    4893},
 	{104,    4741}, {105,    4594}, {106,    4453}, {107,    4316}, {108,    4184}, {109,    4057}, {110,    3934}, {111,    3816},
 	{112,    3701}, {113,    3591}, {114,    3484}, {115,    3380}, {116,    3281}, {117,    3185}, {118,    3093}, {119,    3003},
-	{120,    2916}, {121,    2832}, {122,    2751}, {123,    2672}, {124,    2596}, {125,    2522}
+	{120,    2916}, {121,    2832}, {122,    2751}, {123,    2672}, {124,    2596}, {125,    2522}, {125,    2522}, {125,    2522},
+	{125,    2522}, {125,    2522}, {125,    2522}, {125,    2522}, {125,    2522}, {125,    2522}, {125,    2522}, {125,    2522},
+	{125,    2522}, {125,    2522}, {125,    2522}, {125,    2522},
 };
 
 static struct temp_param charger_ic_temp_table[] = {
@@ -7780,7 +7801,7 @@ static int oplus_mtk_ic_register(struct device *dev, struct mtk_charger *info)
 	struct device_node *node = NULL;
 	struct device_node *child;
 	struct oplus_chg_ic_dev *ic_dev = NULL;
-	struct oplus_chg_ic_cfg ic_cfg;
+	struct oplus_chg_ic_cfg ic_cfg = { 0 };
 	int rc;
 
 	if (NULL == dev || NULL == dev->of_node || NULL == info) {
@@ -8713,6 +8734,12 @@ static int mtk_charger_probe(struct platform_device *pdev)
 	if (IS_ERR(pinfo->slave_cp_chan)) {
 		chg_err("Couldn't get slave_cp_chan...\n");
 		pinfo->slave_cp_chan = NULL;
+	}
+
+	pinfo->vbus_chan = devm_iio_channel_get(&pdev->dev, "vbus");
+	if (IS_ERR(pinfo->vbus_chan)) {
+		chg_err("Couldn't get vbus...\n");
+		pinfo->vbus_chan = NULL;
 	}
 
 	pinfo->hvdcp_disable = false;

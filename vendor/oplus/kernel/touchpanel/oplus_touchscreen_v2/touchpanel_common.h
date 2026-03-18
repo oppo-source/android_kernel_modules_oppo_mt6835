@@ -215,6 +215,7 @@ typedef enum {
 	MODE_WATERPROOF,
 	MODE_LEATHER_COVER,
 	MODE_AOD,
+	MODE_UNDERWATER,
 } work_mode;
 
 typedef enum {
@@ -986,7 +987,8 @@ struct touchpanel_data {
 	bool game_switch_support;                           /*indicate game switch support or not*/
 	bool face_detect_support;                           /*touch porximity function*/
 	bool fingerprint_underscreen_support;               /*fingerprint underscreen support*/
-	bool fingerprint_not_report_in_suspend;
+	bool fingerprint_not_report_in_suspend;             /*fingerprint not report in suspending*/
+	bool fingerprint_error_report_support;              /*fingerprint error report support*/
 	bool sec_long_low_trigger;                          /*samsung s6d7ate ic int feature*/
 	bool suspend_gesture_cfg;
 	bool auto_test_force_pass_support;                  /*auto test force pass in early project*/
@@ -1024,6 +1026,7 @@ struct touchpanel_data {
 	bool skip_reinit_device_support;                    /*spi need skip complete_all, prevent error in access reg*/
 	bool edge_pull_out_support;                         /*feature used to edge coordinates pull out*/
 	bool aiunit_game_info_support;                      /*feature used to aiunit game info*/
+	bool disable_touch_event_support;                      /*feature to support underwater photo*/
 	u8 aiunit_game_get_num;
 	u8 aiunit_game_set_num;
 	int aiunit_game_enable;
@@ -1225,6 +1228,7 @@ struct touchpanel_data {
 	int cur_headset_state;                                /*current state of headset for usb*/
 
 	bool is_usb_checked;                                /*state of charger for tp*/
+	int disable_touch_event;                            /*disable touch event for underwater photo mode*/
 	int cur_usb_state;                                    /*current state of charger for usb*/
 	bool is_wireless_checked;                           /*state of wireless charger*/
 
@@ -1385,6 +1389,7 @@ struct oplus_touchpanel_operations {
 
 	void (*freq_hop_trigger)(void *chip_data); /*trigger frequency-hopping*/
 	void (*force_water_mode)(void *chip_data, bool enable); /*force enter water mode*/
+	void (*set_fp_error_report)(void *chip_data, bool enable); /*set fp error report*/
 	void (*inject_wdt_reset)(void *chip_data, int value); /*inject watchdog reset*/
 	void (*get_water_mode)(void *chip_data); /*force enter water mode*/
 	void (*get_glove_mode)(void *chip_data, int *enable); /*get glove mode parameters*/

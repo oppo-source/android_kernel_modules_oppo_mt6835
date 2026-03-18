@@ -775,6 +775,13 @@
                     "str": "qcom_cali_info"
                 },
                 {
+                    "lable": "TRACK_GAGUE_ERR_BATT_CELLS_DAMAGE",
+                    "desc": {
+                        "zh": "并联双电芯电池电芯损坏"
+                    },
+                    "str": "batt_cells_damage"
+                },
+                {
                     "lable": "TRACK_GAGUE_ERR_MAX",
                     "desc": {
                         "zh": "异常上限"

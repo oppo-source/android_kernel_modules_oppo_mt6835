@@ -67,6 +67,11 @@ config OPLUS_SY6974B_CHARGER
 	help
 	  Say Y here to declare SY6974B support
 
+config OPLUS_SGM41515_CHARGER
+        bool "SGM41515 support"
+        help
+          Say Y here to declare SGM41515 support
+
 config OPLUS_PD_MANAGER_CHARGER
 	bool "PD_MANAGER support"
 	help
@@ -295,6 +300,11 @@ config OPLUS_SEC_IC_SC5891
         default n
         help
           Say Y here to declare encryption ic sc5891 support
+
+config OPLUS_DUAL_CELLS_PROTECTION
+	bool "enable dual cells protection support"
+	help
+	  Say Y here to declare dual cells protection support
 
 endif #OPLUS_CHG_VOOCPHY
 

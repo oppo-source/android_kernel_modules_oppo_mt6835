@@ -13,6 +13,7 @@
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_DDL)
 #include "sa_ddl.h"
 #endif
+
 #define UX_NICE_0_LOAD  1024
 #define WMULT_CONST (~0U)
 #define WMULT_SHIFT 32

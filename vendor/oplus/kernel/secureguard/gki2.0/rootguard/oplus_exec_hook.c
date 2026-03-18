@@ -45,16 +45,26 @@ int oplus_RWO_root_check(struct task_struct *p)
 		if(p->tgid != p->pid) {
 		/* get tgid's task and cred */
 		tgid_task = find_task_by_vpid(p->tgid);
+		if (tgid_task == NULL) {
+			printk("[ROOTCHECK-EXEC2-ERROR]: can not find task.\n");
+			return 0;
+		}
 		get_task_struct(tgid_task);
 		/* get tgid's uid */
 		/* printk("[kevent][INFO]:curr process %s(%d), tgid process %s(%d). \n", p->comm, p->cred->uid, tgid_task->comm, tgid_task->cred->uid);*/
 		if(!CHECK_ROOT_CREDS(tgid_task)) {
 			printk("[ROOTCHECK-EXEC2-ERROR]:Found task process %s, uid:%d, tgid_uid: %d.\n", p->comm, p->cred->uid , tgid_task->cred->uid);
 			report_secuiry_event(event_type, EXEC2_EVENT, "");
+			put_task_struct(tgid_task);
 			return 1;
 		}
+		put_task_struct(tgid_task);
 	} else {
 		parent_task = rcu_dereference(p->real_parent);
+		if (!parent_task) {
+			printk("[ROOTCHECK-EXEC2-ERROR]: Real parent task is NULL.\n");
+			return 0;
+		}
                 /*
 		parent_task1 = get_parent_task(p);
 		printk("[kevent]:curr process %s(%d,%d), parent process %s(%d,%d).\n", p->comm, p->cred->uid, p->pid, parent_task->comm, parent_task->cred->uid, parent_task->pid);
@@ -86,9 +96,9 @@ static void oplus_report_execveat(const char *path, const char* dcs_event_id)
 
 	dcs_event->type = 3;
 
-	strncpy(dcs_event->log_tag, dcs_event_tag,
+	strlcpy(dcs_event->log_tag, dcs_event_tag,
 		sizeof(dcs_event->log_tag));
-	strncpy(dcs_event->event_id, dcs_event_id,
+	strlcpy(dcs_event->event_id, dcs_event_id,
 		sizeof(dcs_event->event_id));
 
 	dcs_event->payload_length = snprintf(dcs_event_payload, 256,

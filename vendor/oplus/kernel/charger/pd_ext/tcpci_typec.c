@@ -2368,12 +2368,12 @@ int tcpc_typec_handle_timeout(struct tcpc_device *tcpc, uint32_t timer_id)
 	}
 #endif /* CONFIG_TYPEC_CHECK_LEGACY_CABLE */
 
-        if (timer_id == TYPEC_TIMER_DRP_SRC_TOGGLE &&
-                (tcpc->typec_state != typec_unattached_snk) &&
-                                (!rv && SOUTHCHIP_PD_VID == chip_vid)) {
-                TCPC_DBG("Dummy SRC_TOGGLE\n");
-                return 0;
-        }
+	if (timer_id == TYPEC_TIMER_DRP_SRC_TOGGLE
+			&& (!rv && SOUTHCHIP_PD_VID == chip_vid)
+			&& (tcpc->typec_state != typec_unattached_snk)) {
+		TCPC_DBG("Dummy SINK_TOGGLE\n");
+		return 0;
+	}
 
 	if (timer_id >= TYPEC_TIMER_START_ID)
 		tcpc_reset_typec_debounce_timer(tcpc);

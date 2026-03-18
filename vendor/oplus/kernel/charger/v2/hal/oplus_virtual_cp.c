@@ -80,6 +80,7 @@ struct oplus_virtual_cp_ic {
 	struct oplus_virtual_cp_child *child_list;
 	struct oplus_cp_strategy *strategy;
 	struct delayed_work monitor_work;
+	struct mutex online_lock;
 
 	enum oplus_cp_work_mode work_mode;
 	int work_status_change_count;
@@ -596,7 +597,6 @@ static void oplus_vc_online_work(struct work_struct *work)
 	}
 
 	if (!child->parent->online && online) {
-		child->parent->online = true;
 		oplus_chg_ic_func(child->parent, OPLUS_IC_FUNC_INIT);
 	}
 }
@@ -619,8 +619,6 @@ static void oplus_vc_offline_work(struct work_struct *work)
 			clear_bit(i, &chip->open_flag);
 			continue;
 		}
-		if (online)
-			continue;
 		online = true;
 		chip->main_cp = i;
 		chg_info("main cp change to %s\n", chip->child_list[i].ic_dev->manu_name);
@@ -628,7 +626,6 @@ static void oplus_vc_offline_work(struct work_struct *work)
 	}
 
 	if (child->parent->online && !online) {
-		child->parent->online = false;
 		oplus_chg_ic_func(child->parent, OPLUS_IC_FUNC_EXIT);
 	}
 }
@@ -796,9 +793,12 @@ static int oplus_chg_vc_init(struct oplus_chg_ic_dev *ic_dev)
 		return -ENODEV;
 	}
 	chip = oplus_chg_ic_get_drvdata(ic_dev);
-	if (ic_dev->online)
-		return 0;
 
+	mutex_lock(&chip->online_lock);
+	if (ic_dev->online) {
+		mutex_unlock(&chip->online_lock);
+		return 0;
+	}
 	chip->strategy = oplus_vc_strategy_alloc(chip);
 	if (chip->strategy != NULL) {
 		rc = oplus_vc_strategy_init(chip->strategy);
@@ -811,6 +811,7 @@ static int oplus_chg_vc_init(struct oplus_chg_ic_dev *ic_dev)
 	chip->work_mode = CP_WORK_MODE_UNKNOWN;
 	ic_dev->online = true;
 	oplus_chg_ic_virq_trigger(ic_dev, OPLUS_IC_VIRQ_ONLINE);
+	mutex_unlock(&chip->online_lock);
 
 	return 0;
 }
@@ -827,11 +828,14 @@ static int oplus_chg_vc_exit(struct oplus_chg_ic_dev *ic_dev)
 	if (!ic_dev->online)
 		return 0;
 
+	mutex_lock(&chip->online_lock);
 	ic_dev->online = false;
 	oplus_vc_strategy_release(chip->strategy);
 	chip->strategy = NULL;
 	oplus_chg_ic_virq_trigger(ic_dev, OPLUS_IC_VIRQ_OFFLINE);
 	chg_info("unregister success\n");
+	mutex_unlock(&chip->online_lock);
+
 	return 0;
 }
 
@@ -1208,7 +1212,7 @@ static int oplus_chg_vc_open_step(struct oplus_virtual_cp_ic *vc, struct oplus_c
 		return -ENODEV;
 
 	rc = oplus_chg_ic_func(ic_dev, OPLUS_IC_FUNC_CP_SET_ADC_ENABLE, true);
-	if (rc < 0) {
+	if (rc < 0 && rc != -ENOTSUPP) {
 		chg_err("can't enable cp[%s] adc, rc=%d\n", ic_dev->manu_name, rc);
 		return rc;
 	}
@@ -1557,9 +1561,26 @@ static int oplus_chg_vc_set_work_start(struct oplus_chg_ic_dev *ic_dev, bool sta
 	vc->open_flag = 0;
 	vc->pre_open_flag = 0;
 	vc->open_flag_change_count = 0;
+
+	if (vc->strategy == NULL && ic_dev->online) {
+		mutex_lock(&vc->online_lock);
+		vc->strategy = oplus_vc_strategy_alloc(vc);
+		if (vc->strategy != NULL) {
+			rc = oplus_vc_strategy_init(vc->strategy);
+			if (rc < 0) {
+				chg_err("cp strategy init error, rc=%d", rc);
+				oplus_vc_strategy_release(vc->strategy);
+				vc->strategy = NULL;
+			}
+		}
+		mutex_unlock(&vc->online_lock);
+	}
+
 	if (vc->connect_type == OPLUS_CHG_IC_CONNECT_PARALLEL) {
 		if (start) {
 			if (vc->strategy) {
+				chg_info("%s: use %s strategy\n", ic_dev->manu_name,
+					 oplus_cp_strategy_type_str(vc->strategy->desc->type));
 				cancel_delayed_work_sync(&vc->monitor_work);
 				rc = oplus_chg_vc_set_work_start_strategy(vc);
 				/*
@@ -1569,6 +1590,7 @@ static int oplus_chg_vc_set_work_start(struct oplus_chg_ic_dev *ic_dev, bool sta
 				schedule_delayed_work(&vc->monitor_work,
 					msecs_to_jiffies(MONITOR_WORK_DELAY_MS));
 			} else {
+				chg_info("%s: no strategy\n", ic_dev->manu_name);
 				/* Only the main CP is allowed to be turned on here */
 				if (vc->main_cp < 0 || vc->main_cp >= vc->child_num)
 					return -EINVAL;
@@ -2545,6 +2567,7 @@ static int oplus_virtual_cp_probe(struct platform_device *pdev)
 	chip->dev = &pdev->dev;
 	platform_set_drvdata(pdev, chip);
 
+	mutex_init(&chip->online_lock);
 	INIT_DELAYED_WORK(&chip->monitor_work, oplus_vc_monitor_work);
 
 	rc = of_property_read_u32(node, "oplus,ic_index", &ic_index);

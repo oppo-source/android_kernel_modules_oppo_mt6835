@@ -62,6 +62,7 @@ struct hw_vphy_info {
 	bool (*vphy_get_retry_flag)(struct device *dev);
 	void (*vphy_set_bal_curr_limit)(struct device *dev, int curr);
 	int (*vphy_get_frame_head)(struct device *dev, int *head);
+	bool (*vphy_get_fastchg_commu_ing)(struct device *dev);
 };
 
 struct vphy_chip {

@@ -21,6 +21,8 @@
 #include <linux/debugfs.h>
 #include <linux/memcontrol.h>
 
+#include "level_protect.h"
+
 #ifdef CONFIG_MAPPED_PROTECT_ALL
 #define MAPCOUNT_PROTECT_THRESHOLD (20)
 #define RETRY_GET_MAPCOUNT (3)
@@ -195,6 +197,12 @@ static void page_should_be_protect(void *data, struct page* page,
 				return;
 			}
 		}
+	}
+#endif
+
+#ifdef CONFIG_OPLUS_SMART_STORAGE
+	if (file && page_should_be_level_protect(page, should_protect)) {
+		return;
 	}
 #endif
 
@@ -695,6 +703,9 @@ retry_get_num_mapcpount:
 	enable_entry = proc_create("fg_protect_enable", 0666, NULL, &fg_mapcount_enable_ops);
 	protect_count_entry = proc_create("fg_protect_count", 0666, NULL, &fg_protect_count_ops);
 #endif
+#ifdef CONFIG_OPLUS_SMART_STORAGE
+	level_protect_proc_init();
+#endif
 
 #endif
 	pr_info("mapped_protect_init succeed!\n");
@@ -705,8 +716,10 @@ static void __exit mapped_protect_exit(void)
 {
 	unregister_mapped_protect_vendor_hooks();
 	remove_proc_entry("mapped_protect_show", NULL);
+#ifdef CONFIG_OPLUS_SMART_STORAGE
+	level_protect_proc_remove();
+#endif
 	pr_info("mapped_protect_exit exit succeed!\n");
-
 	return;
 }
 

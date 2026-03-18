@@ -808,6 +808,19 @@ int oplus_gauge_get_remaining_capacity(void)
 	return rm;
 }
 
+void oplus_gauge_set_plugin_status(void)
+{
+	int rc;
+	if (!g_mms_gauge)
+		return;
+
+	rc = oplus_chg_ic_func(g_mms_gauge->gauge_ic, OPLUS_IC_FUNC_GAUGE_SYNC_PLUGIN);
+	if (rc < 0)
+		chg_err("set gauge plugin status err, rc=%d\n", rc);
+
+	return;
+}
+
 int oplus_gauge_get_device_type(void)
 {
 	if (!g_mms_gauge)
@@ -3658,7 +3671,7 @@ static void oplus_mms_gauge_check_calib_time_update(struct oplus_mms *mms,
 			int dod_calib_time, int qmax_calib_time, struct gauge_calib_info *calib_info)
 {
 	int i;
-	bool update;
+	bool update = false;
 	bool calib_info_init = false;
 	struct oplus_mms_gauge *chip;
 

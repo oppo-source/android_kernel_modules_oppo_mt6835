@@ -10463,7 +10463,7 @@ static void oplus_chg_track_pps_subs_callback(struct mms_subscribe *subs,
 	if (track->pps_info.adapter_pdo == NULL)
 		track->pps_info.adapter_pdo =
 			(u32 *)devm_kzalloc(track->monitor->dev,
-					    sizeof(u32 *) * PPS_PDO_MAX, GFP_KERNEL);
+					    sizeof(u32) * PPS_PDO_MAX, GFP_KERNEL);
 	if (track->pps_info.adapter_pdo == NULL) {
 		chg_err("devm_kzalloc is failed!!!");
 		return;

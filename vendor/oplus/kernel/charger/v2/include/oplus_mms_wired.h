@@ -140,5 +140,4 @@ int oplus_wired_get_byb_id_match_info(struct oplus_mms *topic);
 bool oplus_wired_is_usb_aicl_enhance(void);
 int oplus_wired_get_lpd_info_status(struct oplus_mms *topic);
 int oplus_wired_set_lpd_config(struct oplus_mms *topic, int *config);
-void oplus_wired_typec_shutdown_deint(void);
 #endif /* __OPLUS_MMS_WIRED_H__ */

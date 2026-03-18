@@ -90,6 +90,8 @@ enum panel_id{
 	P_7,
 	ILI7807S,
 	DJN,
+	P_D,
+	P_4,
 	PANEL_NUM
 };
 

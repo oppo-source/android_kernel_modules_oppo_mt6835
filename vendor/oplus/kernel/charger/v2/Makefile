@@ -106,6 +106,7 @@ oplus_chg_v2-y += monitor/oplus_monitor_core.o
 oplus_chg_v2-y += monitor/oplus_chg_track.o
 oplus_chg_v2-y += monitor/oplus_chg_exception.o
 oplus_chg_v2-y += plat_ufcs/plat_ufcs_notify.o
+oplus_chg_v2-y += oplus_chg_dual_cells_protection.o
 
 oplus_chg_v2-$(CONFIG_OPLUS_STATE_RETENTION) += oplus_chg_quirks.o
 oplus_chg_v2-$(CONFIG_OPLUS_STATE_RETENTION) += oplus_chg_state_retention.o
@@ -115,6 +116,7 @@ oplus_chg_v2-$(CONFIG_OPLUS_MP2762_CHARGER) += charger_ic/oplus_hal_mp2650.o
 oplus_chg_v2-$(CONFIG_OPLUS_SGM41512_CHARGER) += charger_ic/oplus_hal_sgm41512.o
 oplus_chg_v2-$(CONFIG_OPLUS_SC6607_CHARGER) += charger_ic/oplus_hal_sc6607.o
 oplus_chg_v2-$(CONFIG_OPLUS_SY6974B_CHARGER) += charger_ic/oplus_hal_sy6974b.o
+oplus_chg_v2-$(CONFIG_OPLUS_SGM41515_CHARGER) += charger_ic/oplus_hal_sgm41515.o
 oplus_chg_v2-$(CONFIG_OPLUS_PD_MANAGER_CHARGER) += charger_ic/oplus_hal_pd_manager.o
 oplus_chg_v2-$(CONFIG_OPLUS_PD_EXT_SUPPORT) += charger_ic/oplus_hal_pd_manager.o
 oplus_chg_v2-$(CONFIG_OPLUS_MT6375_CHARGER) += charger_ic/oplus_hal_mtk6895S.o

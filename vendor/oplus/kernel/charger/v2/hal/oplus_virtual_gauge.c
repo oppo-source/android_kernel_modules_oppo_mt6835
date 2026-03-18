@@ -3730,6 +3730,7 @@ static int oplus_chg_vg_get_sub_btb_connect_state(
 	/* check if the btb_state can be got by gpio */
 	if (gpio_is_valid(sub_btb->gpio)) {
 		*state = gpio_get_value(sub_btb->gpio);
+		chg_debug("btb_state can be got by gpio, *state = %d \n", *state);
 		return 0;
 	}
 
@@ -3751,7 +3752,7 @@ static int oplus_chg_vg_get_sub_btb_connect_state(
 		break;
 	}
 
-	chg_debug("rc = %d, func_support = %d", rc, func_support);
+	chg_debug("rc = %d, func_support = %d, state = %d \n", rc, func_support, *state);
 	if (!func_support) {
 		*state = BATT_BTB_STATE_NOT_SUPPORT;
 		rc = 0;
@@ -3873,6 +3874,35 @@ static int oplus_chg_vg_set_batt_vct(struct oplus_chg_ic_dev *ic_dev, int vct)
 				       OPLUS_IC_FUNC_GAUGE_SET_VCT, vct);
 		if (rc < 0)
 			chg_err("child ic[%d] set battery vct error, rc=%d\n",
+				i, rc);
+		break;
+	}
+
+	return rc;
+}
+
+static int oplus_chg_vg_mtk_sync_plugin(struct oplus_chg_ic_dev *ic_dev)
+{
+	struct oplus_virtual_gauge_ic *chip;
+	int i;
+	int rc = 0;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+
+	chip = oplus_chg_ic_get_drvdata(ic_dev);
+	for (i = 0; i < chip->child_num; i++) {
+		if (!func_is_support(&chip->child_list[i],
+			OPLUS_IC_FUNC_GAUGE_SYNC_PLUGIN)) {
+			rc = (rc == 0) ? -ENOTSUPP : rc;
+			continue;
+		}
+		rc = oplus_chg_ic_func(chip->child_list[i].ic_dev,
+			OPLUS_IC_FUNC_GAUGE_SYNC_PLUGIN);
+		if (rc < 0)
+			chg_err("child ic[%d] set plugin stats fail, rc=%d\n",
 				i, rc);
 		break;
 	}
@@ -4351,6 +4381,10 @@ static void *oplus_chg_vg_get_func(struct oplus_chg_ic_dev *ic_dev,
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_SEC_GET_PRIKEY_INDEX,
 			oplus_chg_vg_sec_get_prikey_index);
 		break;
+	case OPLUS_IC_FUNC_GAUGE_SYNC_PLUGIN:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_SYNC_PLUGIN,
+			oplus_chg_vg_mtk_sync_plugin);
+		break;
 	default:
 		chg_err("this func(=%d) is not supported\n", func_id);
 		func = NULL;
@@ -4762,8 +4796,6 @@ static void oplus_virtual_wired_subs_callback(struct mms_subscribe *subs,
 				if (chip->wired_online && sub_btb->support) {
 					chg_info("start the btb check work!");
 					schedule_delayed_work(&chip->btb_connect_state_check_work, 0);
-				} else {
-					sub_btb->pre_connect_state = BATT_BTB_STATE_CONNECT;
 				}
 			}
 			break;
@@ -4826,8 +4858,6 @@ static void oplus_virtual_wls_subs_callback(
 				chg_debug("wls_online = %d", data.intval);
 				if (chip->wls_online && sub_btb->support)
 					schedule_delayed_work(&chip->btb_connect_state_check_work, 0);
-				else
-					sub_btb->pre_connect_state = BATT_BTB_STATE_CONNECT;
 			}
 			break;
 		default:

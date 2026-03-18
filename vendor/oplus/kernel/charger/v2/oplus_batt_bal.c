@@ -394,9 +394,6 @@ static ssize_t oplus_chg_read(struct file *fp, char __user *buff, size_t count, 
 	struct oplus_batt_bal_chip *chip = container_of(fp->private_data,
 		struct oplus_batt_bal_chip, misc_dev);
 
-	if (chip == NULL)
-		return -EINVAL;
-
 	mutex_lock(&chip->update_batt_info_lock);
 	len = sprintf(page, "sub_current=%d\nsub_voltage=%d\nsub_soc=%d\nsub_temperature=%d\nmain_soc=%d\nbal_curr=%d\n",
 		      -chip->b1_curr,  chip->b1_volt, chip->b1_soc, chip->b1_temp, chip->b2_soc, chip->target_iref);
@@ -431,9 +428,6 @@ static long oplus_chg_ioctl(struct file *fp, unsigned code, unsigned long value)
 	int b1_soc;
 	struct oplus_batt_bal_chip *chip = container_of(fp->private_data,
 		struct oplus_batt_bal_chip, misc_dev);
-
-	if (chip == NULL)
-		return -EINVAL;
 
 	mutex_lock(&chip->update_batt_info_lock);
 	b1_volt = chip->b1_volt;
@@ -472,23 +466,11 @@ static long oplus_chg_ioctl(struct file *fp, unsigned code, unsigned long value)
 
 static int oplus_chg_open(struct inode *ip, struct file *fp)
 {
-	struct oplus_batt_bal_chip *chip = container_of(fp->private_data,
-		struct oplus_batt_bal_chip, misc_dev);
-
-	if (chip == NULL)
-		return -EINVAL;
-
 	return 0;
 }
 
 static int oplus_chg_release(struct inode *ip, struct file *fp)
 {
-	struct oplus_batt_bal_chip *chip = container_of(fp->private_data,
-		struct oplus_batt_bal_chip, misc_dev);
-
-	if (chip == NULL)
-		return -EINVAL;
-
 	return 0;
 }
 
@@ -1297,16 +1279,24 @@ static const struct oplus_mms_desc oplus_mms_batt_bal_desc = {
 static void oplus_batt_bal_check_batt_temp_region(
 	struct oplus_batt_bal_chip *chip)
 {
+	int rc = 0;
+
 	if (!chip)
 		return;
 
-	if (chip->b1_inr_strategy)
-		oplus_chg_strategy_get_data(
+	if (chip->b1_inr_strategy) {
+		rc = oplus_chg_strategy_get_data(
 			chip->b1_inr_strategy, &chip->b1_temp_region);
+		if (rc < 0)
+			chg_err("can't get b1_temp_region, rc=%d\n", rc);
+	}
 
-	if (chip->b2_inr_strategy)
-		oplus_chg_strategy_get_data(
+	if (chip->b2_inr_strategy) {
+		rc = oplus_chg_strategy_get_data(
 			chip->b2_inr_strategy, &chip->b2_temp_region);
+		if (rc < 0)
+			chg_err("can't get b2_temp_region, rc=%d\n", rc);
+	}
 
 	if (chip->b1_temp_region > BATT_TEMP_REGION_T6)
 		chip->b1_temp_region =  BATT_TEMP_REGION_T6;

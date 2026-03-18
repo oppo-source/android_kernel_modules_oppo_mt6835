@@ -498,6 +498,7 @@ struct oplus_chg_comm {
 	struct work_struct set_reserve_dec_cv_down_info_work;
 	int flash_mode;
 	struct delayed_work flash_mode_boost_work;
+	struct delayed_work offline_clean_work;
 };
 
 typedef struct {
@@ -4739,12 +4740,23 @@ static void oplus_chg_gauge_stuck(struct oplus_chg_comm *chip)
 	static bool first_flag = true;
 	union mms_msg_data data = { 0 };
 	struct oplus_comm_spec_config *spec = &chip->spec;
+	static bool last_gauge_stuck_flag = false;
+	bool gauge_stuck_flag = false;
 
 	if (first_flag) {
 		first_flag = false;
 		cnt_time = CNT_TIMELIMIT * HZ;
 		cnt_time += jiffies;
 		first_soc = chip->soc;
+	}
+
+	if (chip->soc != first_soc) {
+		first_soc = chip->soc;
+		current_sum = 0;
+		theory_current_sum = 0;
+		cnt_time = CNT_TIMELIMIT * HZ;
+		cnt_time += jiffies;
+		last_gauge_stuck_flag = false;
 	}
 
 	oplus_mms_get_item_data(chip->gauge_topic, GAUGE_ITEM_FCC, &data, false);
@@ -4755,11 +4767,20 @@ static void oplus_chg_gauge_stuck(struct oplus_chg_comm *chip)
 	if (time_after_eq(jiffies, cnt_time) || chip->soc == 100) {
 		cnt_time = CNT_TIMELIMIT * HZ;
 		cnt_time += jiffies;
-		if ((abs(current_sum) > (spec->gauge_stuck_threshold * theory_current_sum) / MULTIPLE) &&
-		    !abs(chip->soc - first_soc) && chip->soc != 100) {
+		chg_info("normal in, current_sum=%d, theory_current_sum=%d, jiffies=%ld\n",
+		           current_sum, theory_current_sum, jiffies);
+
+		gauge_stuck_flag = (abs(current_sum) > (spec->gauge_stuck_threshold * theory_current_sum) / MULTIPLE)
+		                    && (!abs(chip->soc - first_soc)) && (chip->soc != 100);
+
+		if (gauge_stuck_flag && last_gauge_stuck_flag) {
 			chip->gauge_stuck = true;
+			last_gauge_stuck_flag = false;
+			gauge_stuck_flag = false;
 			chg_err("gauge_stuck_count = %d\n", ++gauge_stuck_count);
 		}
+		last_gauge_stuck_flag = gauge_stuck_flag;
+
 		first_soc = chip->soc;
 		current_sum = 0;
 		theory_current_sum = 0;
@@ -5707,8 +5728,8 @@ static void oplus_comm_subscribe_wired_topic(struct oplus_mms *topic, void *prv_
 	oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_ERR_CODE, &data,
 				false);
 	chip->wired_err_code = data.intval;
-	if (!chip->wired_online)
-		schedule_work(&chip->plugin_work);
+
+	schedule_work(&chip->plugin_work);
 }
 
 static void oplus_comm_vooc_subs_callback(struct mms_subscribe *subs,
@@ -6179,6 +6200,7 @@ static void oplus_comm_offline_clean_process(struct oplus_chg_comm *chip)
 	}
 }
 
+#define OFFLINE_CLEAN_DELAY 500
 static void oplus_comm_plugin_work(struct work_struct *work)
 {
 	struct oplus_chg_comm *chip =
@@ -6285,8 +6307,10 @@ static void oplus_comm_plugin_work(struct work_struct *work)
 			chip->bms_heat_temp_compensation = 0;
 			oplus_comm_set_slow_chg(chip->comm_topic, 0, 0, false);
 		}
-		if (!chip->retention_state)
-		    oplus_comm_offline_clean_process(chip);
+		if (chip->retention_topic)
+			schedule_delayed_work(&chip->offline_clean_work, msecs_to_jiffies(OFFLINE_CLEAN_DELAY));
+		else
+			oplus_comm_offline_clean_process(chip);
 		vote(chip->chg_suspend_votable, CHG_LIMIT_CHG_VOTER, false, 0, false);
 		vote(chip->chg_disable_votable, CHG_LIMIT_CHG_VOTER, false, 0, false);
 		vote(chip->chg_disable_votable, FLASH_MODE_VOTER, false, 0, false);
@@ -7631,11 +7655,13 @@ int read_signed_temp_region_data(struct device_node *node, const char *prop_str,
 	for (i = 0; i < row; i++) {
 		for (j = 0; j < col_max; j++) {
 			index = col_map(j) + i * col;
-			of_property_read_u32_index(node, prop_str, index, (u32 *)(addr + j + i * col_max));
+			rc = of_property_read_u32_index(node, prop_str, index, (u32 *)(addr + j + i * col_max));
+			if (rc < 0)
+				chg_err("Count %s failed, rc=%d\n", prop_str, rc);
 		}
 	}
 
-	return 0;
+	return rc;
 }
 
 static void oplus_comm_parse_aging_ffc_dt(struct oplus_chg_comm *comm_dev)
@@ -9046,13 +9072,14 @@ static ssize_t oplus_comm_chg_cycle_write(struct file *file,
 	struct oplus_chg_comm *chip = pde_data(file_inode(file));
 	char proc_chg_cycle_data[16];
 
-	if(count >= 16) {
-		count = 16;
-	}
+	if(count >= sizeof(proc_chg_cycle_data))
+		count = sizeof(proc_chg_cycle_data) - 1;
+
 	if (copy_from_user(&proc_chg_cycle_data, buff, count)) {
 		chg_err("chg_cycle_write error.\n");
 		return -EFAULT;
 	}
+	proc_chg_cycle_data[count] = '\0';
 
 	if ((strncmp(proc_chg_cycle_data, "en808", 5) == 0) ||
 	    (strncmp(proc_chg_cycle_data, "user_enable", 11) == 0)) {
@@ -9830,6 +9857,15 @@ static void oplus_comm_flash_mode_boost_work(struct work_struct *work)
 	vote(chip->chg_disable_votable, FLASH_MODE_VOTER, 0, 0, false);
 }
 
+static void oplus_comm_offline_clean_work(struct work_struct *work)
+{
+	struct delayed_work *dwork = to_delayed_work(work);
+	struct oplus_chg_comm *chip = container_of(dwork, struct oplus_chg_comm, offline_clean_work);
+
+	if (!chip->retention_state)
+		oplus_comm_offline_clean_process(chip);
+}
+
 void oplus_chg_set_camera_on(bool val)
 {
 	int count = FLASH_MODE_SAFETY_VOLTAGE_DETECT_COUNT;
@@ -9861,9 +9897,6 @@ void oplus_chg_set_camera_on(bool val)
 			vote(chip->flash_mode_votable, FLASH_MODE_VOTER, false, 0, false);
 		oplus_set_flash_mode(chip, val);
 		schedule_delayed_work(&chip->flash_mode_boost_work, msecs_to_jiffies(FLASH_MODE_DELAY));
-		if (is_wired_icl_votable_available(chip))
-			rerun_election(chip->wired_icl_votable, true);
-		vote(chip->wired_charging_disable_votable, USER_VOTER, false, 0, false);
 	}
 	return;
 }
@@ -9947,6 +9980,7 @@ static int oplus_comm_driver_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&comm_dev->lcd_notify_reg_work, oplus_comm_lcd_notify_reg_work);
 	INIT_DELAYED_WORK(&comm_dev->fg_soft_reset_work, oplus_fg_soft_reset_work);
 	INIT_DELAYED_WORK(&comm_dev->dec_vol_info_trigger_work, oplus_chg_track_dec_vol_info_trigger_work);
+	INIT_DELAYED_WORK(&comm_dev->offline_clean_work, oplus_comm_offline_clean_work);
 	INIT_DELAYED_WORK(&comm_dev->flash_mode_boost_work, oplus_comm_flash_mode_boost_work);
 
 	spin_lock_init(&comm_dev->remuse_lock);

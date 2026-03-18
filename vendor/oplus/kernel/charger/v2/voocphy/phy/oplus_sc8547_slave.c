@@ -250,11 +250,8 @@ int sc8547_slave_get_ichg(struct oplus_voocphy_manager *chip)
 	u8 slave_cp_enable;
 
 	if (oplus_chg_get_vooc_charging()) {
-		pr_info("slave cp_ichg = %d", oplus_voocphy_mg->slave_cp_ichg);
 		if (oplus_voocphy_mg)
 			return oplus_voocphy_mg->slave_cp_ichg;
-		else
-			return 0;
 	}
 
 	sc8547_slave_update_data(chip);
@@ -451,10 +448,6 @@ static int sc8547_slave_init_device(struct oplus_voocphy_manager *chip)
 {
 	u8 reg_data;
 
-	sc8547_slave_update_bits(chip->slave_client, SC8547_REG_05, SC8547_IBUS_UCP_DIS_MASK,
-			    SC8547_IBUS_UCP_ENABLE << SC8547_IBUS_UCP_DIS_SHIFT);
-	sc8547_slave_update_bits(chip->slave_client, SC8547_REG_08, SC8547_SS_TIMEOUT_SET_MASK,
-			    SC8547_SS_TIMEOUT_81920MS << SC8547_SS_TIMEOUT_SET_SHIFT);
 	sc8547_slave_write_byte(chip->slave_client, SC8547_REG_11, 0x00); /* ADC_CTRL:disable */
 	sc8547_slave_write_byte(chip->slave_client, SC8547_REG_02, 0x01);
 	sc8547_slave_write_byte(chip->slave_client, SC8547_REG_04, vbus_ovp_reg); /* VBUS_OVP:10 2:1 or 1:1V */
@@ -543,10 +536,6 @@ static int sc8547_slave_svooc_hw_setting(struct oplus_voocphy_manager *chip)
 {
 	u8 reg_data;
 
-	sc8547_slave_update_bits(chip->slave_client, SC8547_REG_05, SC8547_IBUS_UCP_DIS_MASK,
-			    SC8547_IBUS_UCP_ENABLE << SC8547_IBUS_UCP_DIS_SHIFT);
-	sc8547_slave_update_bits(chip->slave_client, SC8547_REG_08, SC8547_SS_TIMEOUT_SET_MASK,
-			    SC8547_SS_TIMEOUT_81920MS << SC8547_SS_TIMEOUT_SET_SHIFT);
 	sc8547_slave_write_byte(chip->slave_client, SC8547_REG_02, 0x01); /* VAC_OVP:12v */
 	sc8547_slave_write_byte(chip->slave_client, SC8547_REG_04, vbus_ovp_reg);  /* VBUS_OVP:10v */
 	if (!ic_sc8547a)
@@ -1150,34 +1139,6 @@ static int sc8547_slave_cp_watchdog_reset(struct oplus_chg_ic_dev *ic_dev)
 	return 0;
 }
 
-static int sc8547_slave_set_ucp_disable(struct oplus_chg_ic_dev *ic_dev, bool en)
-{
-	struct sc8547a_slave_device *chip;
-	int ret = 0;
-
-	if (ic_dev == NULL) {
-		chg_err("oplus_chg_ic_dev is NULL");
-		return -ENODEV;
-	}
-	chip = oplus_chg_ic_get_priv_data(ic_dev);
-
-	chg_info("slave ucp %s\n", en ? "disable" : "enable");
-
-	if (en) {
-		ret = sc8547_slave_update_bits(chip->slave_client, SC8547_REG_05, SC8547_IBUS_UCP_DIS_MASK,
-				    SC8547_IBUS_UCP_DISABLE << SC8547_IBUS_UCP_DIS_SHIFT);
-		ret |= sc8547_slave_update_bits(chip->slave_client, SC8547_REG_08, SC8547_SS_TIMEOUT_SET_MASK,
-				    SC8547_SS_TIMEOUT_DISABLE);
-	} else {
-		ret = sc8547_slave_update_bits(chip->slave_client, SC8547_REG_05, SC8547_IBUS_UCP_DIS_MASK,
-				    SC8547_IBUS_UCP_ENABLE << SC8547_IBUS_UCP_DIS_SHIFT);
-		ret |= sc8547_slave_update_bits(chip->slave_client, SC8547_REG_08, SC8547_SS_TIMEOUT_SET_MASK,
-				    SC8547_SS_TIMEOUT_81920MS << SC8547_SS_TIMEOUT_SET_SHIFT);
-	}
-
-	return ret;
-}
-
 static void *sc8547_slave_cp_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplus_chg_ic_func func_id)
 {
 	void *func = NULL;
@@ -1246,9 +1207,6 @@ static void *sc8547_slave_cp_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplu
 		break;
 	case OPLUS_IC_FUNC_CP_WATCHDOG_RESET:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_CP_WATCHDOG_RESET, sc8547_slave_cp_watchdog_reset);
-		break;
-	case OPLUS_IC_FUNC_CP_SET_UCP_DISABLE:
-		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_CP_SET_UCP_DISABLE, sc8547_slave_set_ucp_disable);
 		break;
 	default:
 		chg_err("this func(=%d) is not supported\n", func_id);

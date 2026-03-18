@@ -197,6 +197,7 @@ bool is_heavy_load_top_task(struct task_struct *p)
 }
 
 struct ux_sched_cputopo ux_sched_cputopo;
+bool global_less_prime_cpu_arch;
 
 static inline void sched_init_ux_cputopo(void)
 {
@@ -300,6 +301,25 @@ static void build_oplus_cpu_array(void)
 }
 #endif
 
+inline bool is_less_prime_cpu_arch(void)
+{
+	unsigned int sliver_cpus = 0;
+	unsigned int total_cpus = 0;
+	int i;
+	bool ret = false;
+
+	for (i = 0; i < ux_sched_cputopo.cls_nr; i++) {
+		if (i == 0) {
+			sliver_cpus = cpumask_weight(&ux_sched_cputopo.sched_cls[i].cpus);
+		}
+		total_cpus += cpumask_weight(&ux_sched_cputopo.sched_cls[i].cpus);
+	}
+	/* The number of small cpus at least two more than that of prime cpus */
+	ret = sliver_cpus >= (total_cpus - sliver_cpus + 4);
+
+	return ret;
+}
+
 void update_ux_sched_cputopo(void)
 {
 	unsigned long prev_cap = 0;
@@ -356,6 +376,8 @@ void update_ux_sched_cputopo(void)
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_LOADBALANCE)
 	build_oplus_cpu_array();
 #endif
+
+	global_less_prime_cpu_arch = is_less_prime_cpu_arch();
 }
 EXPORT_SYMBOL(update_ux_sched_cputopo);
 
@@ -1916,6 +1938,9 @@ static inline void update_load_set(struct load_weight *lw, unsigned long w)
 
 void android_vh_reweight_entity_handler(void *unused, struct sched_entity *se)
 {
+	if (!(global_sched_group_enabled & 0x1))
+		return;
+
 	if (!entity_is_task(se)) {
 		struct cfs_rq *gcfs_rq = NULL;
 		struct task_group *tg = NULL;
@@ -1935,10 +1960,14 @@ void android_vh_reweight_entity_handler(void *unused, struct sched_entity *se)
 		if (group_weight == se->load.weight)
 			return;
 
-		trace_printk("tg[%s] weight[%lu->%lu]\n", oplus_tg->sg_info->tg_name,
-				scale_load_down(se->load.weight), scale_load_down(group_weight));
-
 		update_load_set(&se->load, group_weight);
 	}
 }
 #endif
+
+void android_vh_blk_rq_ctx_init_handler(void *unused, struct request *rq, struct blk_mq_tags *tags, struct blk_mq_alloc_data *data, u64 alloc_time_ns)
+{
+	if (test_task_ux(current) && (IOPRIO_PRIO_CLASS(rq->ioprio) != IOPRIO_CLASS_RT)) {
+		rq->ioprio =  IOPRIO_PRIO_VALUE(IOPRIO_CLASS_RT, 4);
+	}
+}

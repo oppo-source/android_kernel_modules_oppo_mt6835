@@ -135,15 +135,17 @@ void report_secuiry_event(const char* event_name, unsigned int event_type, const
 	dcs_event = (struct kernel_packet_info*)dcs_stack;
 	dcs_event_payload = dcs_stack + sizeof(struct kernel_packet_info);
 	dcs_event->type = event_type;/*set type of security event*/
-	strncpy(dcs_event->log_tag, dcs_event_tag,
-	sizeof(dcs_event->log_tag));
-	strncpy(dcs_event->event_id, dcs_event_id,
-	sizeof(dcs_event->event_id));
-	/*accrding type, chosse array*/
+
+	strlcpy(dcs_event->log_tag, dcs_event_tag, sizeof(dcs_event->log_tag));
+	strlcpy(dcs_event->event_id, dcs_event_id, sizeof(dcs_event->event_id));
+
 	dcs_event->payload_length = snprintf(dcs_event_payload, 256, "$$uid@@%d$$EVENT_TYPE@@%d$$current_name@@%s$$additional@@%s\n", current_uid().val, event_type, current->comm, more);
-	if (dcs_event->payload_length < 256) {
-		dcs_event->payload_length += 1;
+
+	if (dcs_event->payload_length >= 256) {
+	    dcs_event->payload_length = 255;
 	}
+
+	dcs_event_payload[dcs_event->payload_length] = '\0';
 	kevent_send_to_user(dcs_event);
 }
 EXPORT_SYMBOL(report_secuiry_event);

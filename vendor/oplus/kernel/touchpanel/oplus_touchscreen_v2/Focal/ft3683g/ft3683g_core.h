@@ -41,6 +41,8 @@
 #define FTS_REG_FOD_EN                          0xCF
 #define FTS_REG_FOD_INFO                        0xE1
 #define FTS_REG_FOD_INFO_LEN                    9
+#define FTS_REG_FOD_ERROR_INFO                  0xE0
+#define FTS_REG_FOD_ERROR_INFO_LEN              14
 #define FTS_REG_AOD_INFO                        0xD3
 #define FTS_REG_AOD_INFO_LEN                    6
 #define FTS_REG_DIFFER_VERSION                	0xCD
@@ -76,7 +78,7 @@
 #define FTS_REG_PALM_TO_SLEEP_STATUS            0x9B
 #define FTS_REG_INJECT_WDT_RESET                0xB6
 #define FTS_REG_FREQUENCE_WATER_MODE			0xBF
-
+#define FTS_REG_SET_FP_ERROR_REPORT             0xBF /* bit7 */
 #define FTS_REG_GESTURE_OUTPUT_ADDRESS          0xD3
 #define FTS_REG_MODULE_ID                       0xE3
 #define FTS_REG_LIC_VER                         0xE4
@@ -239,6 +241,13 @@ enum _FTS_RST_REASON {
 	FTS_RST_REASON_PWR      = 0x08,
 };
 
+enum _FTS_FP_ERROR_TYPE {
+	FTS_FINGERPRINT_DOWN_BEFORE_FP_ENABLE = 0,
+	FTS_FINGERPRINT_X_Y_NOT_MATCH = 0x02,
+	FTS_ANOTHER_FINGER_ON_NON_FP_ZONE = 0x04,
+	FTS_FINGERPRINT_AREA_NOT_MATCH = 0x10,
+	FTS_FINGERPRINT_OUT_MOVE_IN = 0x40,
+};
 
 enum _FTS_TOUCH_ETYPE {
 	TOUCH_DEFAULT = 0x00,
@@ -393,6 +402,8 @@ struct chip_data_ft3683g {
 	u8 differ_mode;
 	u8 tp_differ_version;
 
+	u8 gesture_flag;
+
 	char *test_limit_name;
 	char *fw_name;
 	tp_dev tp_type;             /*tp_devices.h*/
@@ -431,6 +442,7 @@ struct chip_data_ft3683g {
 	bool water_mode;
 	int extreme_game_report_rate;
 	bool extreme_game_flag;
+	bool fingerprint_error_report_support;              /*fingerprint error report support*/
 };
 
 

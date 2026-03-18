@@ -1078,27 +1078,8 @@
                     }
                 }
             }
-        },
-        {
-            "lable": "OPLUS_IC_FUNC_TYPEC_SHUTDOWN_DEINT",
-            "desc": {
-                "zh": "关机ccopen"
-            },
-            "auto_debug_code": true,
-            "parameter_list": [],
-            "parameter_desc": [],
-            "vict": {
-                "read": false,
-                "write":  {
-                       "cmd": "vict -f {id} -S vic-*",
-                       "desc": {
-                           "zh": "N/A"
-                       }
-                   },
-                "overwrite": false
-            }
         }
     ],
 
-    "version": "V1.4:33:d5b79d767066a3585cc35a09006470fc02edda0c8b520cc41b4aa485c2e0372e"
+    "version": "V1.3:32:cc182ac293a6254de31adc42edb0ebbdbba104990b6a118c31bf635521dcaa65"
 }

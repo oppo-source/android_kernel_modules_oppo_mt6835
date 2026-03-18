@@ -689,7 +689,13 @@ static int oplus_mt6375_guage_get_afi_update_done(struct oplus_chg_ic_dev *ic_de
 
 static int oplus_mt6375_guage_get_batt_hmac(struct oplus_chg_ic_dev *ic_dev, bool *pass)
 {
-	*pass = true;
+	if (g_gauge_chip &&
+	    g_gauge_chip->gauge_ops &&
+	    g_gauge_chip->gauge_ops->get_battery_hmac)
+		*pass = g_gauge_chip->gauge_ops->get_battery_hmac();
+	else
+		*pass = true;
+
 	chg_info("*pass = %d\n", *pass);
 	return 0;
 }
@@ -1056,6 +1062,21 @@ static int oplus_mtk_get_dec_cv_soh(struct oplus_chg_ic_dev *ic_dev, int*dec_soh
 	return 0;
 }
 
+static int oplus_mtk_sync_plugin_state(struct oplus_chg_ic_dev *ic_dev)
+{
+	if (g_gauge_chip == NULL || g_gauge_chip->gauge_ops == NULL) {
+		chg_err("g_gauge_chip is null.\n");
+		return -EINVAL;
+	}
+
+	if (g_gauge_chip->gauge_ops->sync_plugin_state == NULL)
+		return -EINVAL;
+
+	g_gauge_chip->gauge_ops->sync_plugin_state();
+
+	return 0;
+}
+
 static void *oplus_chg_get_func(struct oplus_chg_ic_dev *ic_dev,
 				enum oplus_chg_ic_func func_id)
 {
@@ -1186,6 +1207,10 @@ static void *oplus_chg_get_func(struct oplus_chg_ic_dev *ic_dev,
 	case OPLUS_IC_FUNC_GAUGE_GET_DEC_CV_SOH:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_GET_DEC_CV_SOH,
 						   oplus_mtk_get_dec_cv_soh);
+		break;
+	case OPLUS_IC_FUNC_GAUGE_SYNC_PLUGIN:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_SYNC_PLUGIN,
+							oplus_mtk_sync_plugin_state);
 		break;
 	default:
 		chg_err("this func(=%d) is not supported\n", func_id);

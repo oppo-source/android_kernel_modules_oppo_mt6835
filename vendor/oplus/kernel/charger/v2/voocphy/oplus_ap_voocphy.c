@@ -1074,6 +1074,16 @@ bool oplus_voocphy_chip_is_null(void)
 		return false;
 }
 
+bool oplus_voocphy_slave_chip_is_null(void)
+{
+	if(!g_voocphy_chip)
+		return true;
+	if (!g_voocphy_chip->slave_ops)
+		return true;
+	else
+		return false;
+}
+
 static bool oplus_vooc_wake_monitor_start_work(struct oplus_voocphy_manager *chip)
 {
 	schedule_delayed_work(&chip->monitor_start_work, 0);
@@ -1424,6 +1434,7 @@ static int oplus_voocphy_upload_cp_error(struct oplus_voocphy_manager *chip, int
 static int oplus_voocphy_print_dbg_info(struct oplus_voocphy_manager *chip)
 {
 	int i = 0;
+	u8 value = 0;
 	bool fg_dump_reg = false;
 	bool fg_send_info = false;
 	int report_flag = 0;
@@ -1455,6 +1466,16 @@ chg_exception:
 	chip->voocphy_cp_irq_flag = chip->interrupt_flag;
 	chip->voocphy_vooc_irq_flag = chip->vooc_flag;
 	chip->disconn_pre_vbat_calc = chip->vbat_calc;
+	if (chip->ops && chip->ops->get_voocphy_enable) {
+		chip->ops->get_voocphy_enable(chip, &value);
+		chip->voocphy_enable = value;
+	}
+	if (chip->voocphy_dual_cp_support &&
+	    chip->slave_ops && chip->slave_ops->get_voocphy_enable) {
+	    	value = 0;
+		chip->slave_ops->get_voocphy_enable(chip, &value);
+		chip->slave_voocphy_enable = value;
+	}
 	chip->vbat_calc = 0;
 	if (fg_dump_reg) {
 		if (chip->ops && chip->ops->dump_voocphy_reg) {
@@ -1686,9 +1707,7 @@ static void oplus_voocphy_update_data(struct oplus_voocphy_manager *chip)
 		chip->ops->update_data(chip);
 
 		if (chip->voocphy_dual_cp_support) {
-			if (!chip->slave_ops) {
-				voocphy_err("slave_ops is NULL!\n");
-			} else {
+			if (chip->slave_ops && chip->slave_ops->update_data) {
 				chip->slave_ops->update_data(chip);
 			}
 		}
@@ -2583,11 +2602,12 @@ static int oplus_voocphy_get_ichg_devation(struct oplus_voocphy_manager *chip)
 
 #define OPLUS_VOOCPHY_SLAVE_CHECK_DELAY_MS              300
 #define OPLUS_VOOCPHY_SLAVE_STATUS_CHECK_DELAY_MS       50
-#define OPLUS_VOOCPHY_SLAVE_STATUS_CHECK_MAX_COUNT      60
+#define OPLUS_VOOCPHY_SLAVE_STATUS_CHECK_MAX_COUNT      20
 static bool oplus_voocphy_check_slave_cp_status(struct oplus_voocphy_manager *chip)
 {
 	int i;
 	u8 slave_cp_status = 0;
+	u8 main_cp_enable = 0;
 
 	if (!chip)
 		return false;
@@ -2604,8 +2624,9 @@ static bool oplus_voocphy_check_slave_cp_status(struct oplus_voocphy_manager *ch
 					    oplus_voocphy_get_ichg_devation(chip),
 					    chip->cp_ibus_devation,
 					    i);
-				if (oplus_chglib_is_wired_present(chip->dev) == false) {
-					voocphy_err("offline!!\n");
+				oplus_voocphy_get_chg_enable(chip, &main_cp_enable);
+				if (oplus_chglib_is_wired_present(chip->dev) == false || main_cp_enable == 0) {
+					voocphy_err("offline!! or main cp disabled\n");
 					return false;
 				}
 			} else {
@@ -3256,7 +3277,7 @@ static int oplus_voocphy_handle_get_batt_vol_cmd(struct oplus_voocphy_manager *c
 
 	if(chip->ask_batvol_first) {
 		if ((chip->adapter_type == ADAPTER_VOOC20 || chip->adapter_type == ADAPTER_VOOC30) &&
-		    chip->parallel_charge_support && chip->voocphy_dual_cp_support) {
+		    chip->vooc_recovery_support) {
 			if (!chip->recovery_system_done)
 				schedule_work(&chip->first_ask_batvol_work);
 		}
@@ -3361,6 +3382,7 @@ static int oplus_voocphy_reply_adapter_mesg(struct oplus_voocphy_manager *chip)
 	switch (chip->fastchg_adapter_ask_cmd) {
 	case VOOC_CMD_ASK_FASTCHG_ORNOT:
 		status = oplus_voocphy_handle_ask_fastchg_ornot_cmd(chip);
+		chip->twice_request_current_enable = true;
 		break;
 	case VOOC_CMD_IDENTIFICATION:
 		status = oplus_voocphy_handle_identification_cmd(chip);
@@ -3388,6 +3410,10 @@ static int oplus_voocphy_reply_adapter_mesg(struct oplus_voocphy_manager *chip)
 		break;
 	case VOOC_CMD_GET_BATT_VOL:
 		status = oplus_voocphy_handle_get_batt_vol_cmd(chip);
+		if (chip->twice_request_current_enable) {
+			chip->twice_request_current_enable = false;
+			chip->ap_need_change_current = 5;
+		}
 		break;
 	case VOOC_CMD_NULL:
 	case VOOC_CMD_RECEVICE_DATA_0E:
@@ -4854,7 +4880,7 @@ unsigned char oplus_voocphy_set_fastchg_current(struct oplus_voocphy_manager *ch
 
 
 	if ((chip->adapter_type == ADAPTER_VOOC20 || chip->adapter_type == ADAPTER_VOOC30) &&
-	    chip->parallel_charge_support && chip->voocphy_dual_cp_support) {
+	    chip->vooc_recovery_support) {
 		if (!chip->recovery_system_done) {
 			voocphy_info("wait system recovery, set current 3a");
 			chip->current_expect = chip->current_expect >
@@ -5010,7 +5036,7 @@ static int oplus_voocphy_curr_event_handle(struct device *dev, unsigned long dat
 
 	if (chip->voocphy_dual_cp_support) {
 		if ((chip->adapter_type == ADAPTER_VOOC20 || chip->adapter_type == ADAPTER_VOOC30) &&
-		    chip->parallel_charge_support && !chip->recovery_system_done)
+		    chip->vooc_recovery_support && !chip->recovery_system_done)
 			chip->slave_cp_enable_thr =
 				CURRENT_RECOVERY_LIMIT * 100 - chip->slave_cp_enable_thr_low;
 		else
@@ -5045,7 +5071,7 @@ static int oplus_voocphy_curr_event_handle(struct device *dev, unsigned long dat
 
 		if ((chip->adapter_type == ADAPTER_VOOC20 ||
 		    chip->adapter_type == ADAPTER_VOOC30) &&
-		    chip->parallel_charge_support && !chip->recovery_system_done) {
+		    chip->vooc_recovery_support && !chip->recovery_system_done) {
 			 if (slave_trouble_count == 2) {
 				if (chip->current_max > CURRENT_TROUBLE_LIMIT) {
 					chip->current_max = CURRENT_TROUBLE_LIMIT;
@@ -5993,8 +6019,6 @@ static int oplus_voocphy_parse_lcf_strategy(struct oplus_voocphy_manager *chip)
 
 	chip->lcf_num = 0;
 	for_each_child_of_node(chip->dev->of_node, child_node) {
-		if (!child_node)
-			continue;
 		if (strncmp(child_node->name, "svooc_lcf_strategy", strlen("svooc_lcf_strategy")) == 0)
 			chip->lcf_num++;
 	}
@@ -6071,6 +6095,10 @@ static int oplus_voocphy_parse_batt_curves(struct oplus_voocphy_manager *chip)
 
 	chip->voocphy_bidirect_cp_support = of_property_read_bool(node, "oplus_spec,voocphy_bidirect_cp_support");
 	voocphy_info("voocphy_bidirect_cp_support = %d\n", chip->voocphy_bidirect_cp_support);
+
+	chip->vooc_recovery_support = chip->voocphy_dual_cp_support &&
+		(of_property_read_bool(node, "oplus_spec,vooc_recovery_support") || chip->parallel_charge_support);
+	voocphy_info("vooc_recovery_support = %d\n", chip->vooc_recovery_support);
 
 	chip->version_judge_support = of_property_read_bool(node, "oplus_spec,version_judge_support");
 	voocphy_info("version_judge_support = %d\n", chip->version_judge_support);
@@ -6768,6 +6796,8 @@ static void oplus_voocphy_clear_dbg_info(struct oplus_voocphy_manager *chip)
 	chip->r_state = 0;
 	chip->vbus_adjust_cnt = 0;
 	chip->voocphy_cp_irq_flag = 0;
+	chip->voocphy_enable = 0;
+	chip->slave_voocphy_enable = 0;
 	chip->voocphy_iic_err = 0;
 	chip->slave_voocphy_iic_err = 0;
 	chip->voocphy_vooc_irq_flag = 0;
@@ -6790,9 +6820,14 @@ static void oplus_voocphy_recovery_system_work(struct work_struct *work)
 	if (g_voocphy_chip) {
 		g_voocphy_chip->recovery_system_done = true;
 		g_voocphy_chip->current_recovery_limit = g_voocphy_chip->current_default;
-		if (!g_voocphy_chip->ap_need_change_current)
-			g_voocphy_chip->ap_need_change_current =
-				oplus_voocphy_set_fastchg_current(g_voocphy_chip);
+		if (g_voocphy_chip->adapter_type == ADAPTER_VOOC20 || g_voocphy_chip->adapter_type == ADAPTER_VOOC30) {
+			if (slave_trouble_count == 1)
+				slave_trouble_count = 0;
+			if (!g_voocphy_chip->ap_need_change_current)
+				g_voocphy_chip->ap_need_change_current =
+					oplus_voocphy_set_fastchg_current(g_voocphy_chip);
+		}
+
 		g_voocphy_chip->slave_cp_enable_thr = g_voocphy_chip->default_slave_cp_enable_thr;
 		voocphy_info("system recovery, set default satisfies current");
 	}
@@ -6849,7 +6884,7 @@ static int oplus_voocphy_init(struct oplus_voocphy_manager *chip)
 	oplus_voocphy_clear_cnt_info(chip);
 	init_proc_voocphy_debug(chip);
 
-	if (chip->parallel_charge_support && chip->voocphy_dual_cp_support) {
+	if (chip->vooc_recovery_support) {
 		chip->recovery_system_done = false;
 		schedule_delayed_work(&chip->recovery_system_work,
 			round_jiffies_relative(msecs_to_jiffies(RECOVERY_SYSTEM_DELAY)));
@@ -7202,6 +7237,20 @@ static int oplus_apvphy_get_frame_head(struct device *dev, int *head)
 	return 0;
 }
 
+static bool oplus_apvphy_fastchg_commu_ing(struct device *dev)
+{
+	struct oplus_voocphy_manager *chip;
+
+	if (dev == NULL)
+		return false;
+
+	chip = dev_get_drvdata(dev);
+	if (!chip)
+		return false;
+
+	return chip->fastchg_commu_ing;
+}
+
 int oplus_is_voocphy_charging(struct device *dev)
 {
 	struct oplus_voocphy_manager *chip = dev_get_drvdata(dev);
@@ -7373,6 +7422,7 @@ static struct hw_vphy_info ap_vinf = {
 	.vphy_get_retry_flag		= oplus_apvphy_get_retry_flag,
 	.vphy_set_fastchg_ap_allow	= oplus_apvphy_set_ap_fastchg_allow,
 	.vphy_get_frame_head		= oplus_apvphy_get_frame_head,
+	.vphy_get_fastchg_commu_ing	= oplus_apvphy_fastchg_commu_ing,
 };
 
 #if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)

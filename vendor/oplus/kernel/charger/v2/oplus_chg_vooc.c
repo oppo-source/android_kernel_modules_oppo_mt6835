@@ -63,6 +63,8 @@
 #define SINGAL_BATT_FACTOR	2
 #define RETRY_15S_COUNT		2
 #define DATA_WIDTH_V2		7
+#define FASTCHG_COMMU_ING	1
+#define FASTCHG_COMMU_NOT_ING	0
 
 #define SUBBOARD_TEMP_ABNORMAL_MAX_CURR		7300
 #define BTB_TEMP_OVER_MAX_INPUT_CUR		1000
@@ -77,7 +79,7 @@
 #define ABNORMAL_65W_ADAPTER_CONNECT_ERROR_COUNT_LEVEL	8
 #define WAIT_BC1P2_GET_TYPE 600
 #define VOOC_WAIT_BC1P2_GET_TYPE 1000
-
+#define VOOC_ABNORMAL_ADAPTER_POWER_MAX 80
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0))
 #define pde_data(inode) PDE_DATA(inode)
@@ -129,6 +131,7 @@ struct oplus_vooc_config {
 	int32_t *abnormal_over_80w_adapter_cur_array;
 	uint32_t vooc_curr_table_type;
 	bool voocphy_bidirect_cp_support;
+	uint32_t vooc_abnormal_adapter_power_max;
 } __attribute__((packed));
 
 struct oplus_chg_vooc {
@@ -539,6 +542,8 @@ static int oplus_vooc_afi_update_condition(struct oplus_mms *topic,
 					   union mms_msg_data *data);
 static void oplus_turn_off_fastchg(struct oplus_chg_vooc *chip);
 static int oplus_vooc_get_real_wired_type(struct oplus_chg_vooc *chip);
+static int oplus_voocphy_get_fastchg_commu_ing(struct oplus_mms *topic,
+					 union mms_msg_data *data);
 
 __maybe_unused static bool is_err_topic_available(struct oplus_chg_vooc *chip)
 {
@@ -578,13 +583,14 @@ static int find_level_to_current(int val, struct current_level *table, int len)
 
 int oplus_vooc_check_abnormal_power_for_error_count(struct oplus_chg_vooc *chip)
 {
+	struct oplus_vooc_config *config = &chip->config;
 	int abnormal_power = -1;
 
 	if (chip->support_abnormal_over_80w_adapter)
 		abnormal_power = sid_to_adapter_power(chip->sid);
 	if (chip->connect_voter_disable)
 		abnormal_power = -1;
-	if (abnormal_power >= 80)
+	if (abnormal_power >= config->vooc_abnormal_adapter_power_max)
 		chip->connect_error_count_level = ABNORMAL_ADAPTER_CONNECT_ERROR_COUNT_LEVEL;
 	else if (chip->pre_is_abnormal_adapter & ABNOMAL_ADAPTER_IS_65W_ABNOMAL_ADAPTER)
 		chip->connect_error_count_level = ABNORMAL_65W_ADAPTER_CONNECT_ERROR_COUNT_LEVEL;
@@ -945,13 +951,14 @@ static void oplus_select_abnormal_max_cur(struct oplus_chg_vooc *chip)
 static void oplus_vooc_set_sid(struct oplus_chg_vooc *chip, unsigned int sid)
 {
 	struct mms_msg *msg;
+	struct oplus_vooc_config *config = &chip->config;
 	int rc;
 
 	if (chip->sid == sid && sid == 0)
 		return;
 	chip->sid = sid;
 
-	if (sid_to_adapter_power(sid) >= 80)
+	if (sid_to_adapter_power(sid) >= config->vooc_abnormal_adapter_power_max)
 		chip->is_abnormal_adapter |= ABNOMAL_ADAPTER_IS_OVER_80W_ADAPTER;
 	else
 		chip->is_abnormal_adapter &= ~ABNOMAL_ADAPTER_IS_OVER_80W_ADAPTER;
@@ -3110,7 +3117,7 @@ static void oplus_vooc_fastchg_work(struct work_struct *work)
 		chip->switch_retry_count = 0;
 		if (config->vooc_version >= VOOC_VERSION_5_0)
 			chip->adapter_model_factory = true;
-		if ((sid_to_adapter_power(oplus_get_adapter_sid(chip, chip->adapter_id)) >= 80) &&
+		if ((sid_to_adapter_power(oplus_get_adapter_sid(chip, chip->adapter_id)) >= config->vooc_abnormal_adapter_power_max) &&
 		    chip->support_abnormal_over_80w_adapter)
 		    chip->is_abnormal_adapter |= ABNOMAL_ADAPTER_IS_OVER_80W_ADAPTER;
 
@@ -5187,6 +5194,16 @@ static struct mms_item oplus_vooc_item[] = {
 			.update = oplus_normal_connect_count_level,
 		}
 	},
+	{
+		.desc = {
+			.item_id = VOOC_ITEM_FASTCHG_COMMU_ING,
+			.str_data = false,
+			.up_thr_enable = false,
+			.down_thr_enable = false,
+			.dead_thr_enable = false,
+			.update = oplus_voocphy_get_fastchg_commu_ing,
+		}
+	},
 };
 
 static const struct oplus_mms_desc oplus_vooc_desc = {
@@ -5359,6 +5376,12 @@ static int oplus_chg_vooc_parse_dt(struct oplus_chg_vooc *chip,
 	}
 
 	oplus_vooc_reset_temp_range(chip);
+
+	rc = of_property_read_u32(node, "oplus_spec,vooc_abnormal_adapter_power_max", &config->vooc_abnormal_adapter_power_max);
+	if (rc) {
+		chg_err("oplus_spec,vooc_abnormal_adapter_power_max reading failed, rc=%d\n", rc);
+		config->vooc_abnormal_adapter_power_max = VOOC_ABNORMAL_ADAPTER_POWER_MAX;
+	}
 
 	if (!of_property_read_bool(node, "oplus_spec,vooc_bad_volt") ||
 	    !of_property_read_bool(node, "oplus_spec,vooc_bad_volt_suspend")) {
@@ -7281,6 +7304,40 @@ end:
 	if (data != NULL)
 		data->intval = bcc_temp_range;
 	return 0;
+}
+
+static int oplus_voocphy_get_fastchg_commu_ing(struct oplus_mms *topic,
+					 union mms_msg_data *data)
+{
+	struct oplus_chg_vooc *chip;
+	bool fastchg_commu_ing = false;
+	int ret = 0;
+
+	if (topic == NULL) {
+		chg_err("topic is NULL\n");
+		return -EINVAL;
+	}
+	if (data == NULL) {
+		chg_err("data is NULL\n");
+		return -EINVAL;
+	}
+	chip = oplus_mms_get_drvdata(topic);
+	if (chip == NULL) {
+		chg_err("chip is NULL\n");
+		return -EINVAL;
+	}
+
+	ret = oplus_vooc_get_fastchg_commu_ing(chip->vooc_ic, &fastchg_commu_ing);
+	if (ret < 0)
+		fastchg_commu_ing = false;
+
+	if (data != NULL) {
+		if (fastchg_commu_ing)
+			data->intval = FASTCHG_COMMU_ING;
+		else
+			data->intval = FASTCHG_COMMU_NOT_ING;
+	}
+	return ret;
 }
 
 #define OPLUS_BCC_MAX_CURR_INIT 73

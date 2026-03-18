@@ -172,11 +172,12 @@ static int ux_page_pool_fillthread(void *p)
 					pool->order, j, pool->low[j], pool->high[j], pool->count[j],
 					pool->gfp_mask);
 #endif
-				while (pool->count[j] < pool->high[j])
+				while (pool->count[j] < pool->high[j]) {
 					if (page_pool_fill(pool, j) < 0) {
 						/* sleep for 20ms if alloc fail */
-						msleep(20);
+						msleep_interruptible(20);
 					}
+				}
 #ifdef UXPAGEPOOL_DEBUG
 				pr_info("fill end   <<<<<order:%d migratetype:%d low: %d high: %d count:%d use %dms\n",
 					pool->order, j, pool->low[j], pool->high[j], pool->count[j],
@@ -639,6 +640,8 @@ static void unreserve_highatomic_bypass(void *data, bool force,
 {
 	if (!force && (zone->nr_reserved_highatomic <= (SZ_16M >> PAGE_SHIFT)))
 		*skip_unreserve_highatomic = true;
+	else
+		*skip_unreserve_highatomic = false;
 }
 
 static bool in_dma32_zone(struct per_cpu_pages *pcp)

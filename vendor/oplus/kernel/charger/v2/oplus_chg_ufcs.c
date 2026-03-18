@@ -468,6 +468,7 @@ struct oplus_ufcs {
 	unsigned int err_flag;
 	bool ufcs_online;
 	bool ufcs_charging;
+	bool ufcs_verify_adapter;
 	bool handshake_ok;
 	bool adapter_check_third_ufcs;
 	int retention_ufcs_power;
@@ -999,6 +1000,31 @@ static int oplus_ufcs_set_ufcs_vid(struct oplus_ufcs *chip, u16 vid)
 	return rc;
 }
 
+static int oplus_ufcs_set_verify_adapter(struct oplus_ufcs *chip, bool verify_adapter)
+{
+	struct mms_msg *msg;
+	int rc;
+
+	if (chip->ufcs_verify_adapter == verify_adapter)
+		return 0;
+
+	chip->ufcs_verify_adapter = verify_adapter;
+	chg_info("set verify_adapter=%s\n", verify_adapter ? "true" : "false");
+
+	msg = oplus_mms_alloc_msg(MSG_TYPE_ITEM, MSG_PRIO_MEDIUM,
+				  UFCS_ITEM_VERIFY_ADAPTER);
+	if (msg == NULL) {
+		chg_err("alloc msg error\n");
+		return -ENOMEM;
+	}
+	rc = oplus_mms_publish_msg(chip->ufcs_topic, msg);
+	if (rc < 0) {
+		chg_err("publish ufcs verify_adapter msg error, rc=%d\n", rc);
+		kfree(msg);
+	}
+
+	return rc;
+}
 
 static void oplus_ufcs_switch_end_recheck_work(struct work_struct *work)
 {
@@ -2550,16 +2576,28 @@ static void oplus_ufcs_switch_check_work(struct work_struct *work)
 				chg_info("oplus adapter check third ufcs\n");
 				chip->adapter_check_third_ufcs = true;
 			} else {
+				rc = oplus_ufcs_set_verify_adapter(chip, true);
+				if (rc < 0)
+					chg_err("set adapter verify error, rc=%d\n", rc);
 				rc = oplus_ufcs_verify_adapter(chip, 1, chip->auth_data, UFCS_VERIFY_AUTH_DATA_SIZE);
 				if (rc < 0) {
 					chg_err("adapter verify error, rc=%d\n", rc);
+					rc = oplus_ufcs_set_verify_adapter(chip, false);
+					if (rc < 0)
+						chg_err("set adapter verify error, rc=%d\n", rc);
 					oplus_ufcs_push_err_info(chip, UFCS_ERR_ANTHEN_ERR, 0);
 					goto next;
 				} else if (!!rc) {
 					chg_info("adapter verify pass\n");
+					rc = oplus_ufcs_set_verify_adapter(chip, false);
+					if (rc < 0)
+						chg_err("set adapter verify error, rc=%d\n", rc);
 					oplus_ufcs_set_oplus_adapter(chip, true);
 				} else {
 					chg_err("adapter verify fail\n");
+					rc = oplus_ufcs_set_verify_adapter(chip, false);
+					if (rc < 0)
+						chg_err("set adapter verify error, rc=%d\n", rc);
 					if (chip->retention_exit_ufcs_flag != EXIT_THIRD_UFCS)
 						chip->adapter_verify_fail_flag = true;
 					oplus_ufcs_push_err_info(chip, UFCS_ERR_ANTHEN_ERR, 0);
@@ -6048,6 +6086,26 @@ static int oplus_ufcs_update_ufcs_vid(struct oplus_mms *mms,
 	return 0;
 }
 
+static int oplus_ufcs_update_verify_adapter(struct oplus_mms *mms,
+	union mms_msg_data *data)
+{
+	struct oplus_ufcs *chip;
+
+	if (mms == NULL) {
+		chg_err("mms is NULL");
+		return -EINVAL;
+	}
+	if (data == NULL) {
+		chg_err("data is NULL");
+		return -EINVAL;
+	}
+	chip = oplus_mms_get_drvdata(mms);
+
+	data->intval = chip->ufcs_verify_adapter;
+
+	return 0;
+}
+
 static void oplus_ufcs_topic_update(struct oplus_mms *mms, bool publish)
 {
 }
@@ -6121,6 +6179,12 @@ static struct mms_item oplus_ufcs_item[] = {
 	{
 		.desc = {
 			.item_id = UFCS_ITEM_ADAPTER_POWER,
+		}
+	},
+	{
+		.desc = {
+			.item_id = UFCS_ITEM_VERIFY_ADAPTER,
+			.update = oplus_ufcs_update_verify_adapter,
 		}
 	},
 };
@@ -7338,8 +7402,6 @@ static int oplus_ufcs_parse_lcf_strategy_dt(struct oplus_ufcs *chip)
 
 	chip->oplus_lcf_num = 0;
 	for_each_child_of_node(chip->dev->of_node, child_node) {
-		if (!child_node)
-			continue;
 		if (strncmp(child_node->name, "ufcs_oplus_lcf_strategy", strlen("ufcs_oplus_lcf_strategy")) == 0)
 			chip->oplus_lcf_num++;
 	}

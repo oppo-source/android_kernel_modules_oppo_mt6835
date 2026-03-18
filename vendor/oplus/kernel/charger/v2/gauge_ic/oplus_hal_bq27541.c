@@ -6024,7 +6024,10 @@ static int bq28z610_get_term_volt(struct chip_bq27541 *chip, int *volt)
 	int value = 0;
 	u8 read_data[BQ28Z610_DEEP_DISCHG_SIZE] = { 0 };
 
-	if (!chip || is_return_pre_value(chip) || (!chip->batt_bq28z610 && !chip->batt_bq27z561)) {
+	if (!chip)
+		return -EINVAL;
+
+	if (is_return_pre_value(chip) || (!chip->batt_bq28z610 && !chip->batt_bq27z561)) {
 		*volt = chip->deep_term_volt_pre;
 		return rc;
 	}
@@ -6054,7 +6057,10 @@ static int bq28z610_get_deep_dischg_num(struct chip_bq27541 *chip)
 	int dischg_num = 0;
 	u8 read_data[BQ28Z610_DEEP_DISCHG_SIZE] = { 0, 0, 0, 0, 0 };
 
-	if (!chip || is_return_pre_value(chip) || (!chip->batt_bq28z610 && !chip->batt_bq27z561)) {
+	if (!chip)
+		return -EINVAL;
+
+	if (is_return_pre_value(chip) || (!chip->batt_bq28z610 && !chip->batt_bq27z561)) {
 		return chip->deep_dischg_count_pre;
 	}
 
@@ -6223,7 +6229,10 @@ static int bq28z610_get_last_cc(struct chip_bq27541 *chip)
 	int cc = 0;
 	u8 read_data[BQ28Z610_DEEP_DISCHG_SIZE] = { 0, 0, 0, 0, 0 };
 
-	if (!chip || is_return_pre_value(chip) || (!chip->batt_bq28z610 && !chip->batt_bq27z561))
+	if (!chip)
+		return -EINVAL;
+
+	if (is_return_pre_value(chip) || (!chip->batt_bq28z610 && !chip->batt_bq27z561))
 		return chip->last_cc_pre;
 
 	mutex_lock(&chip->bq28z610_alt_manufacturer_access);
@@ -6308,7 +6317,10 @@ static int bq28z610_get_vct(struct chip_bq27541 *chip)
 	int value = 0;
 	bool cc_check = false;
 
-	if (!chip || is_return_pre_value(chip) || !chip->batt_bq28z610)
+	if (!chip)
+		return -EINVAL;
+
+	if (is_return_pre_value(chip) || !chip->batt_bq28z610)
 		return chip->vct_pre;
 
 	mutex_lock(&chip->bq28z610_alt_manufacturer_access);
@@ -7314,6 +7326,9 @@ static void register_gauge_devinfo(struct chip_bq27541 *chip)
 		if(chip->batt_zy0603) {
 			version = "zy0603";
 			manufacture = "ZY";
+		} else if (chip->batt_nfg8011b) {
+			version = "nfg8011b";
+			manufacture = "HX";
 		} else {
 			version = "bq27541";
 			manufacture = "TI";
@@ -7353,7 +7368,7 @@ static void bq27541_reset(struct i2c_client *client)
 	ui_soc = bq27541_get_battery_soc(chip);
 
 	if (!chip || chip->batt_zy0603 || chip->batt_nfg8011b) {
-		if (chip->batt_nfg8011b && chip->fpga_support)
+		if (chip && chip->batt_nfg8011b && chip->fpga_support)
 			set_bit(SHUTDOWN, &chip->operate_allow);
 		return;
 	}
@@ -8226,9 +8241,9 @@ static int bq28z610_get_battery_gauge_type_for_bcc(struct oplus_chg_ic_dev *ic_d
 static int bq28z610_get_battery_dod0(struct oplus_chg_ic_dev *ic_dev, int index, int *dod0)
 {
 	struct chip_bq27541 *chip;
-	int dod0_1;
-	int dod0_2;
-	int dod_passed_q;
+	int dod0_1 = 0;
+	int dod0_2 = 0;
+	int dod_passed_q = 0;
 
 	if (ic_dev == NULL || dod0 == NULL) {
 		chg_err("oplus_chg_ic_dev is NULL");
@@ -8307,9 +8322,9 @@ static int bq28z610_get_battery_dod0_passed_q(struct oplus_chg_ic_dev *ic_dev, i
 static int bq28z610_get_battery_qmax(struct oplus_chg_ic_dev *ic_dev, int index, int *qmax)
 {
 	struct chip_bq27541 *chip;
-	int qmax_1;
-	int qmax_2;
-	int qmax_passed_q;
+	int qmax_1 = 0;
+	int qmax_2 = 0;
+	int qmax_passed_q = 0;
 	int retry = RETRY_CNT;
 
 	if (ic_dev == NULL || qmax == NULL) {

@@ -77,7 +77,6 @@ def define_oplus_local_modules():
         ]),
         conditional_defines = {
             "mtk":  ["CONFIG_OPLUS_SYSTEM_KERNEL_MTK"],
-            "qcom": ["CONFIG_OPLUS_SYSTEM_KERNEL_QCOM"],
         },
 #        header_deps = [
 #            "//vendor/oplus/kernel/cpu:config_headers",
@@ -93,7 +92,6 @@ def define_oplus_local_modules():
         ]),
         conditional_defines = {
             "mtk":  ["CONFIG_OPLUS_SYSTEM_KERNEL_MTK"],
-            "qcom": ["CONFIG_OPLUS_SYSTEM_KERNEL_QCOM"],
         },
         includes = ["."],
         local_defines = ["CONFIG_OPLUS_FEATURE_SAUPWK"],
@@ -131,7 +129,6 @@ def define_oplus_local_modules():
         ]),
         conditional_defines = {
             "mtk":  ["CONFIG_OPLUS_MTK_DRM_GKI_NOTIFY"],
-            "qcom": ["CONFIG_QCOM_PANEL_EVENT_NOTIFIER"],
         },
         includes = ["."],
         local_defines = ["CONFIG_OPLUS_FEATURE_THEIA_MODULE"],
@@ -145,7 +142,6 @@ def define_oplus_local_modules():
         conditional_srcs = {
             "CONFIG_OPLUS_DDK_MTK": {
                 True:  ["mtk/mtk_shutdown_reboot/mtk_force_shutdown.c"],
-                False: ["qcom/force_shutdown/force_shutdown.c"],
             }
         },
         includes = ["."],
@@ -159,44 +155,8 @@ def define_oplus_local_modules():
         conditional_srcs = {
             "CONFIG_OPLUS_DDK_MTK": {
                 True:  ["mtk/oplus_pmic_monitor_mtk/oplus_pmic_info_get_mtk.c","mtk/oplus_pmic_monitor_mtk/main.c"],
-                False: ["qcom/qcom_pmic_monitor/oplus_pmic_info_smem.c",
-			"qcom/qcom_pmic_monitor/main.c",
-			"qcom/qcom_pmic_monitor/oplus_pmic_machine_state.c",
-			"qcom/qcom_pmic_monitor/oplus_ocp_dev.c",
-			"qcom/qcom_pmic_monitor/oplus_ocp_state_nvmem.c"],
             }
         },
-        includes = ["."],
-    )
-
-    define_oplus_ddk_module(
-        name = "oplus_bsp_dfr_dump_device_info",
-        srcs = native.glob([
-            "**/*.h",
-            "qcom/dump_device_info/dump_device_info.c",
-        ]),
-        includes = ["."],
-    )
-
-    define_oplus_ddk_module(
-        name = "oplus_bsp_dfr_dump_reason",
-        srcs = native.glob([
-            "**/*.h",
-            "qcom/dump_reason/dump_reason.c",
-        ]),
-        ko_deps = [
-            "//vendor/oplus/kernel/dfr:oplus_bsp_dfr_dump_device_info",
-        ],
-        includes = ["."],
-    )
-
-    define_oplus_ddk_module(
-        name = "oplus_bsp_dfr_pmic_watchdog",
-        srcs = native.glob([
-            "**/*.h",
-            "qcom/qcom_pmicwd/qcom_pmicwd.c",
-            "qcom/qcom_pmicwd/qcom_pwkpwr.c",
-        ]),
         includes = ["."],
     )
 
@@ -233,16 +193,6 @@ def define_oplus_local_modules():
         },
     )
 
-    define_oplus_ddk_module(
-        name = "oplus_bsp_dfr_ordump",
-        srcs = native.glob([
-            "**/*.h",
-            "qcom/oplus_ordump/ordump.c",
-        ]),
-        includes = ["."],
-        local_defines = ["CONFIG_OPLUS_FEATURE_FULLDUMP_BACK"],
-    )
-
     ddk_copy_to_dist_dir(
         name = "oplus_bsp_dfr",
         module_list = [
@@ -256,13 +206,8 @@ def define_oplus_local_modules():
             "oplus_bsp_dfr_ubt",
             "oplus_bsp_dfr_theia",
             "oplus_bsp_dfr_force_shutdown",
-            "oplus_bsp_dfr_pmic_monitor",
-            "oplus_bsp_dfr_dump_device_info",
-            "oplus_bsp_dfr_dump_reason",
-            "oplus_bsp_dfr_pmic_watchdog",
             "oplus_inject",
             "oplus_inject_aw8692x",
-            "oplus_bsp_dfr_ordump",
         ],
         conditional_builds = {
             "oplus_inject_aw8692x": {

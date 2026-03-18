@@ -1260,7 +1260,7 @@ int oplus_ofp_video_mode_aod_handle(void *drm_crtc, void *mtk_panel_ext, void *d
 				OFP_INFO("set_aod_light_mode:%u\n", p_oplus_ofp_params->aod_light_mode);
 			}
 		}
-	} else if (oplus_ofp_get_aod_state() && (refresh_rate != 30)) {
+	} else if ((oplus_ofp_get_aod_state() && (refresh_rate != 30)) || (p_oplus_ofp_params->doze_active != 0 && (refresh_rate != 30))) {
 		if (ext && ext->funcs && ext->funcs->doze_disable) {
 			OFP_INFO("debug for doze_disable\n");
 			ext->funcs->doze_disable(drm_panel, mtk_dsi, dcs_write_gce, handle);
@@ -1546,10 +1546,12 @@ int oplus_ofp_notify_fp_press(void *buf)
 	oplus_disp_trace_c("%d|oplus_ofp_fp_press|%d", g_commit_pid, p_oplus_ofp_params->fp_press);
 
 
-	if (oplus_ofp_is_support() && p_oplus_ofp_params->fp_press) {
-		/* send aod off cmd in doze mode to speed up fingerprint unlocking */
-		OFP_DEBUG("fp press is true\n");
-		oplus_ofp_aod_off_set();
+	if (!oplus_ofp_video_mode_aod_fod_is_enabled() || oplus_ofp_video_mode_30hz_aod_is_enabled()) {
+		if (oplus_ofp_is_support() && p_oplus_ofp_params->fp_press) {
+			/* send aod off cmd in doze mode to speed up fingerprint unlocking */
+			OFP_DEBUG("fp press is true\n");
+			oplus_ofp_aod_off_set();
+		}
 	}
 
 	return 0;
@@ -1605,6 +1607,11 @@ int oplus_ofp_drm_set_hbm(struct drm_crtc *crtc, unsigned int hbm_mode)
 	if (!(mtk_crtc->enabled)) {
 		OFP_ERR("should not set hbm if mtk crtc is not enabled\n");
 		return -EFAULT;
+	}
+
+	if (!(comp && comp->funcs && comp->funcs->io_cmd)) {
+		OFP_ERR("Invalid params\n");
+		return -EINVAL;
 	}
 
 	DDP_MUTEX_LOCK(&mtk_crtc->lock, __func__, __LINE__);

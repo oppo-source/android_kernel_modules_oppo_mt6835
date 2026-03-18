@@ -617,6 +617,7 @@ struct oplus_voocphy_manager {
 	bool external_gauge_support;
 	bool version_judge_support;
 	bool impedance_calculation_newmethod;
+	bool vooc_recovery_support;
 
 	unsigned char voocphy_rx_buff;
 	unsigned char voocphy_tx_buff[VOOCPHY_TX_LEN];
@@ -879,6 +880,8 @@ struct oplus_voocphy_manager {
 	int	disconn_pre_vbat;
 	int	disconn_pre_ibat;
 	int	disconn_pre_vbat_calc;
+	int	voocphy_enable;
+	int	slave_voocphy_enable;
 	int	vbus_adjust_cnt;
 	unsigned int vbat_calc;
 	int ap_handle_timeout_num;
@@ -920,6 +923,7 @@ struct oplus_voocphy_manager {
 	int batt_alarm;
 
 	int plc_status;
+	bool twice_request_current_enable;
 };
 
 struct oplus_voocphy_operations {
@@ -981,6 +985,7 @@ struct voocphy_log_buf {
 };
 
 bool oplus_voocphy_chip_is_null(void);
+bool oplus_voocphy_slave_chip_is_null(void);
 void oplus_voocphy_slave_init(struct oplus_voocphy_manager *chip);
 void oplus_voocphy_get_chip(struct oplus_voocphy_manager **chip);
 int oplus_register_voocphy(struct oplus_voocphy_manager *chip);

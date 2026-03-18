@@ -34,6 +34,10 @@
 #define DEBUG_WARN_ON(x)
 #endif
 
+#include <linux/blkdev.h>
+struct blk_mq_tags;
+struct blk_mq_alloc_data;
+
 #define ux_err(fmt, ...) \
 		pr_err("[sched_assist][%s]"fmt, __func__, ##__VA_ARGS__)
 #define ux_warn(fmt, ...) \
@@ -97,10 +101,8 @@
 
 #define UX_PRIORITY_TOP_APP		0x0A000000
 #define UX_PRIORITY_AUDIO		0x0A000000
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
 #define UX_PRIORITY_PIPELINE_UI 0x06000000
 #define UX_PRIORITY_PIPELINE    0x05000000
-#endif
 
 /* define for sched assist scene type, keep same as the define in java file */
 #define SA_SCENE_OPT_CLEAR			(0)
@@ -236,8 +238,10 @@ struct oplus_rq {
 
 extern int global_debug_enabled;
 extern int global_lowend_plat_opt;
+extern bool global_less_prime_cpu_arch;
 extern int global_sched_assist_enabled;
 extern int global_sched_assist_scene;
+extern int global_sched_group_enabled;
 
 struct rq;
 
@@ -710,5 +714,8 @@ void android_vh_reweight_entity_handler(void *unused, struct sched_entity *se);
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_BAN_APP_SET_AFFINITY)
 void android_vh_sched_setaffinity_early_handler(void *unused, struct task_struct *task, const struct cpumask *new_mask, int *skip);
 #endif
+
+void android_vh_blk_rq_ctx_init_handler(void *unused, struct request *rq, struct blk_mq_tags *tags, struct blk_mq_alloc_data *data, u64 alloc_time_ns);
+
 extern struct notifier_block process_exit_notifier_block;
 #endif /* _OPLUS_SA_COMMON_H_ */

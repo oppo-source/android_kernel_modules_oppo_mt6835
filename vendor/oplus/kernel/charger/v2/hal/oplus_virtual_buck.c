@@ -32,6 +32,13 @@
 
 #include "test-kit.h"
 
+#include <oplus_chg_comm.h>
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+#include <linux/thermal.h>
+#include <soc/oplus/horae_flash_led_temp.h>
+#define NTC_SUBBOARD_TEMP_COUNT  292
+#endif
+
 #define DISCONNECT			0
 #define STANDARD_TYPEC_DEV_CONNECT	BIT(0)
 #define OTG_DEV_CONNECT			BIT(1)
@@ -67,6 +74,15 @@ struct oplus_vc_misc_gpio {
 	struct pinctrl_state *dischg_disable;
 };
 
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+struct oplus_ntc_switch {
+	bool ntc_switch_usbtemp_l;
+	bool ntc_switch_usbtemp_r;
+	bool ntc_switch_subboard;
+	int subboard_temp_table[NTC_SUBBOARD_TEMP_COUNT];
+};
+#endif
+
 struct oplus_virtual_buck_ic {
 	struct device *dev;
 	struct oplus_chg_ic_dev *ic_dev;
@@ -74,6 +90,10 @@ struct oplus_virtual_buck_ic {
 	enum oplus_chg_ic_connect_type connect_type;
 	int child_num;
 	struct oplus_virtual_buck_child *child_list;
+
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	struct oplus_ntc_switch ntc_switch_gpio;
+#endif
 
 	/* parallel charge */
 	int main_charger;
@@ -125,6 +145,109 @@ const struct test_feature_cfg g_typec_port_test_cfg = {
 	.test_info = (void *)g_typec_port_info,
 	.test_func = test_kit_typec_port_test,
 };
+
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+static int oplus_ntc_convert(struct oplus_virtual_buck_ic *chip, int volt)
+{
+	int i;
+	int size;
+
+	size = ARRAY_SIZE(chip->ntc_switch_gpio.subboard_temp_table) - 1;
+	if (size <= 0)
+		return NTC_TEMP_DEFAULT;
+
+	for (i = 1; i <= size; (i = i + 2)) {
+		if (i >= size || chip->ntc_switch_gpio.subboard_temp_table[i] <= volt)
+			break;
+	}
+	if (i >= size)
+		i = size;
+	i--;
+
+	return chip->ntc_switch_gpio.subboard_temp_table[i] * NTC_TEMP_CONVERSION;
+}
+
+static int oplus_get_subboard_temp(struct thermal_zone_device *tz, int *temp)
+{
+	int subboard_volt = 0;
+	int rc;
+	bool ret;
+	struct oplus_virtual_buck_ic *chip;
+
+	chip = (struct oplus_virtual_buck_ic *)tz->devdata;
+	if (chip) {
+		ret = oplus_set_ntc_switch_lock(SUBBOARD, true);
+		if (ret) {
+			mdelay(10);
+			rc = iio_read_channel_processed(chip->usbtemp_adc_l, &subboard_volt);
+			ret = oplus_set_ntc_switch_lock(SUBBOARD, false);
+			if (rc >= 0) {
+				subboard_volt /= NTC_TEMP_CONVERSION;
+				*temp = oplus_ntc_convert(chip, subboard_volt);
+			} else {
+				*temp = NTC_TEMP_DEFAULT;
+				chg_info("iio_read fail\n");
+			}
+		} else {
+			*temp = NTC_TEMP_DEFAULT;
+			chg_info("ntc switch fail\n");
+		}
+	} else {
+		*temp = NTC_TEMP_DEFAULT;
+	}
+	chg_info("subboard_volt:%d, temp:%d,\n", subboard_volt, *temp);
+	return 0;
+}
+
+static struct thermal_zone_device_ops subboard_temp_ops = {
+	.get_temp = oplus_get_subboard_temp,
+};
+
+static void register_subboard_thermal(struct oplus_virtual_buck_ic *chip)
+{
+	int ret = 0;
+	struct thermal_zone_device *tz_dev;
+
+	if (IS_ERR_OR_NULL(&chip->ntc_switch_gpio))
+		return;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	tz_dev = thermal_tripless_zone_device_register("subboard_temp", chip, &subboard_temp_ops, NULL);
+#else
+	tz_dev = thermal_zone_device_register("subboard_temp", 0, 0, chip, &subboard_temp_ops, NULL, 0, 0);
+#endif
+	if (IS_ERR(tz_dev)) {
+		chg_err("subboard_temp register fail");
+		return;
+	}
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
+	ret = thermal_zone_device_enable(tz_dev);
+	if (ret) {
+		thermal_zone_device_unregister(tz_dev);
+		return;
+	}
+#endif
+	chg_info("register_subboard_thermal success\n");
+}
+
+static void oplus_ntc_switch_init(struct oplus_virtual_buck_ic *chip)
+{
+	int rc;
+
+	if (!chip) {
+		chg_err("chip not ready!\n");
+		return;
+	}
+	chip->ntc_switch_gpio.ntc_switch_usbtemp_l = of_property_read_bool(chip->dev->of_node, "oplus,ntc_switch_usbtemp_l");
+	chip->ntc_switch_gpio.ntc_switch_usbtemp_r = of_property_read_bool(chip->dev->of_node, "oplus,ntc_switch_usbtemp_r");
+	chip->ntc_switch_gpio.ntc_switch_subboard = of_property_read_bool(chip->dev->of_node, "oplus,ntc_switch_subboard");
+	if (chip->ntc_switch_gpio.ntc_switch_subboard) {
+		rc = read_signed_data_from_node(chip->dev->of_node, "chg_ntc_para", (s32 *)chip->ntc_switch_gpio.subboard_temp_table,
+						NTC_SUBBOARD_TEMP_COUNT);
+		if (rc >= 0)
+			register_subboard_thermal(chip);
+	}
+}
+#endif
 
 bool test_kit_typec_port_check(void *info, char *buf, size_t len, size_t *use_size)
 {
@@ -2698,6 +2821,34 @@ static int oplus_chg_vb_get_vbus_collapse_status(struct oplus_chg_ic_dev *ic_dev
 }
 
 #define USBTEMP_DEFAULT_VOLT_VALUE_MV 950
+
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+static int oplus_chg_switch_usb_temp(struct oplus_virtual_buck_ic *chip, enum ntc_switch_type usbtemp_type, int *vol_val)
+{
+	int rc = 0;
+	int usbtemp_volt;
+
+	oplus_set_ntc_switch_lock(usbtemp_type, true);
+	mdelay(10);
+
+	switch (usbtemp_type) {
+	case USBTEMP_L:
+		rc = iio_read_channel_processed(chip->usbtemp_adc_l, &usbtemp_volt);
+		break;
+	case USBTEMP_R:
+		rc = iio_read_channel_processed(chip->usbtemp_adc_r, &usbtemp_volt);
+		break;
+	default:
+		usbtemp_volt = USBTEMP_DEFAULT_VOLT_VALUE_MV;
+		break;
+	}
+
+	*vol_val = usbtemp_volt;
+	oplus_set_ntc_switch_lock(usbtemp_type, false);
+	return rc;
+}
+#endif
+
 static int oplus_chg_vb_get_usb_temp_volt(struct oplus_chg_ic_dev *ic_dev, int *vol_l, int *vol_r)
 {
 	struct oplus_virtual_buck_ic *vb;
@@ -2724,7 +2875,15 @@ static int oplus_chg_vb_get_usb_temp_volt(struct oplus_chg_ic_dev *ic_dev, int *
 		goto usbtemp_next;
 	}
 
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	if (vb->ntc_switch_gpio.ntc_switch_usbtemp_l)
+		rc = oplus_chg_switch_usb_temp(vb, USBTEMP_L, &usbtemp_volt);
+	else
+		rc = iio_read_channel_processed(vb->usbtemp_adc_l, &usbtemp_volt);
+#else
 	rc = iio_read_channel_processed(vb->usbtemp_adc_l, &usbtemp_volt);
+#endif
+
 	if (rc < 0) {
 		chg_err("usbtemp_volt_l read error\n");
 		*vol_l = usbtemp_volt_l_pre;
@@ -2751,7 +2910,15 @@ usbtemp_next:
 		return 0;
 	}
 
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	if (vb->ntc_switch_gpio.ntc_switch_usbtemp_r)
+		rc = oplus_chg_switch_usb_temp(vb, USBTEMP_R, &usbtemp_volt);
+	else
+		rc = iio_read_channel_processed(vb->usbtemp_adc_r, &usbtemp_volt);
+#else
 	rc = iio_read_channel_processed(vb->usbtemp_adc_r, &usbtemp_volt);
+#endif
+
 	if (rc < 0) {
 		chg_err("usbtemp_volt_r read error\n");
 		*vol_r = usbtemp_volt_r_pre;
@@ -4279,36 +4446,6 @@ int oplus_chg_vb_set_flash_mode(struct oplus_chg_ic_dev *ic_dev, bool flash_mode
 	return rc;
 }
 
-static int oplus_chg_vb_tcpc_shutdown_deint(struct oplus_chg_ic_dev *ic_dev)
-{
-	struct oplus_virtual_buck_ic *vb;
-	int i;
-	int rc = 0;
-
-	if (ic_dev == NULL) {
-		chg_err("oplus_chg_ic_dev is NULL");
-		return -ENODEV;
-	}
-
-	vb = oplus_chg_ic_get_drvdata(ic_dev);
-
-	for (i = 0; i < vb->child_num; i++) {
-		if (!func_is_support(&vb->child_list[i], OPLUS_IC_FUNC_TYPEC_SHUTDOWN_DEINT)) {
-			rc = -ENOTSUPP;
-			continue;
-		}
-		rc = oplus_chg_ic_func(
-			vb->child_list[i].ic_dev,
-			OPLUS_IC_FUNC_TYPEC_SHUTDOWN_DEINT);
-		if (rc < 0)
-			chg_err("child ic[%d] set flash mode error, rc=%d\n", i, rc);
-		else
-			return 0;
-	}
-
-	return rc;
-}
-
 static void *oplus_chg_vb_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplus_chg_ic_func func_id)
 {
 	void *func = NULL;
@@ -4579,9 +4716,6 @@ static void *oplus_chg_vb_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplus_c
 		break;
 	case OPLUS_IC_FUNC_BUCK_SET_FLASH_MODE:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_SET_FLASH_MODE, oplus_chg_vb_set_flash_mode);
-		break;
-	case OPLUS_IC_FUNC_TYPEC_SHUTDOWN_DEINT:
-		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_TYPEC_SHUTDOWN_DEINT, oplus_chg_vb_tcpc_shutdown_deint);
 		break;
 	default:
 		chg_err("this func(=%d) is not supported\n", func_id);
@@ -4959,6 +5093,10 @@ static int oplus_virtual_buck_probe(struct platform_device *pdev)
 		goto reg_ic_err;
 	}
 
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	oplus_ntc_switch_init(chip);
+#endif
+
 #if IS_ENABLED(CONFIG_OPLUS_CHG_TEST_KIT)
 	oplus_virtual_buck_test_kit_init(chip);
 #endif
@@ -4990,9 +5128,18 @@ iio_init_err:
 static int oplus_virtual_buck_remove(struct platform_device *pdev)
 {
 	struct oplus_virtual_buck_ic *chip = platform_get_drvdata(pdev);
-
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	struct thermal_zone_device *tzd;
+#endif
 	if(chip == NULL)
 		return -ENODEV;
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	if (chip->ntc_switch_gpio.ntc_switch_subboard) {
+		tzd = thermal_zone_get_zone_by_name("subboard_temp");
+		if (!IS_ERR_OR_NULL(tzd))
+			thermal_zone_device_unregister(tzd);
+	}
+#endif
 
 	if (chip->ic_dev->online)
 		oplus_chg_vb_exit(chip->ic_dev);

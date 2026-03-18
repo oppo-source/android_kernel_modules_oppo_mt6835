@@ -170,6 +170,7 @@ static int kcompressd(void *para)
 			}
 		}
 
+		usleep_range(1000, 2000);
 	}
 
 	tsk->flags &= ~(PF_MEMALLOC | PF_KSWAPD);
@@ -371,6 +372,7 @@ int kcompressd_init(void)
 {
 	int ret = 0;
 	struct proc_dir_entry *root_dir_entry;
+	int i;
 
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE)
 	struct config_kcompressed *config;
@@ -401,6 +403,16 @@ int kcompressd_init(void)
 	if (ret) {
 		pr_err("Init kcompressd failed!\n");
 		return ret;
+	}
+
+	for (i = 0; i < nr_kcompressd; i++) {
+		atomic_set(&kcompress[i].running, KCOMPRESSD_RUNNING);
+		kcompress[i].kcompressd = kthread_run(kcompressd,
+				&kcompressd_para[i], "kcompressd:%d", i);
+		if (IS_ERR(kcompress[i].kcompressd)) {
+			atomic_set(&kcompress[i].running, KCOMPRESSD_NOT_STARTED);
+			pr_warn("Failed to start kcompressd:%d\n", i);
+		}
 	}
 
 	pr_err("kcompressd_init succeed!\n");

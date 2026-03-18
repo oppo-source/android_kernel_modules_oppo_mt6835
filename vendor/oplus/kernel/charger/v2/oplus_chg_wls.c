@@ -5913,12 +5913,16 @@ static void oplus_chg_wls_high_temp_track_work(struct work_struct *work)
 	struct delayed_work *dwork = to_delayed_work(work);
 	struct oplus_chg_wls *wls_dev = container_of(dwork, struct oplus_chg_wls, wls_high_temp_track_work);
 	int temp = 0;
+	int rc = 0;
 
 	if (!wls_dev->wls_status.rx_online || !wls_dev->high_temp_track.high_temp_flag ||
 	    wls_dev->high_temp_track.count >= HIGH_TEMP_CHECK_LEN)
 		return;
 
-	oplus_chg_wls_get_batt_temp(wls_dev, &temp);
+	rc = oplus_chg_wls_get_batt_temp(wls_dev, &temp);
+	if (rc < 0) {
+		chg_err("can't get batt temp, rc=%d\n", rc);
+	}
 	wls_dev->high_temp_track.temp[wls_dev->high_temp_track.count] = temp;
 	wls_dev->high_temp_track.count++;
 	chg_info("count:%d, temp:%d\n", wls_dev->high_temp_track.count, temp);

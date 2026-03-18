@@ -214,7 +214,6 @@ static int oplus_chg_ls_fpga_rst(struct oplus_chg_ic_dev *ic_dev, int type)
 				       OPLUS_IC_FUNC_BAL_HW_INIT, type);
 		if (rc < 0)
 			chg_err("child ic[%d] OPLUS_IC_FUNC_GAUGE_FPGA_RST error, rc=%d\n", i, rc);
-		break;
 	}
 
 	return rc;

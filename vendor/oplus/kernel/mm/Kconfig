@@ -7,6 +7,12 @@ config OPLUS_FEATURE_PERFORMANCE_MM
 	help
 	  define this config to add oplus kernel mm feature
 
+config OPLUS_EXTRA_FREE_KBYTES
+	bool "oplus extra free kbytes"
+	default n
+	help
+	  define this config to add oplus extra free kbytes
+
 config OPLUS_FEATURE_ZRAM_OPT
 	tristate "zram optimization"
 	default n
@@ -127,6 +133,13 @@ config OPLUS_EXIT_MM_OPTIMIZE
 	  default n
 	help
 	  define this config to exit mm optimize
+
+config OPLUS_SMART_STORAGE
+	bool "smart storage for performance"
+	depends on MAPPED_PROTECT
+	default n
+	help
+	  smart stroge 1.0 add for performance
 
 source "mm/oplus_mm/hybridswap_zram/Kconfig"
 

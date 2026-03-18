@@ -563,7 +563,7 @@ static int oplus_wired_current_set(struct oplus_chg_wired *chip,
 		if (!rc)
 			led_on = !!data.intval;
 	}
-	if (led_on && cool_down_curr > 0) {
+	if (cool_down_curr > 0) {
 		if (chip->chg_ctrl_by_sale_mode &&
 		    (chip->chg_mode == OPLUS_WIRED_CHG_MODE_QC ||
 		    chip->chg_mode == OPLUS_WIRED_CHG_MODE_PD))
@@ -1294,8 +1294,7 @@ static void oplus_wired_subscribe_wired_topic(struct oplus_mms *topic,
 	oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_ONLINE, &data,
 				true);
 	chip->chg_online = data.intval;
-	if (!chip->chg_online)
-		schedule_work(&chip->plugin_work);
+	schedule_work(&chip->plugin_work);
 }
 
 static void oplus_common_power_check(struct oplus_chg_wired *chip)
@@ -1349,6 +1348,7 @@ static void oplus_wired_plugin_work(struct work_struct *work)
 				false);
 	chip->chg_online = data.intval;
 	if (chip->chg_online) {
+		oplus_gauge_set_plugin_status();
 		oplus_common_power_check(chip);
 		chip->retention_state_ready = false;
 		oplus_wired_set_awake(chip, true);
@@ -2568,7 +2568,7 @@ static void oplus_wired_shutdown(struct platform_device *pdev)
 {
 	struct oplus_chg_wired *chip = platform_get_drvdata(pdev);
 
-	if (!chip) {
+	if (!chip || !chip->chg_online) {
 		chg_err("chip NULL or charger not online");
 		return;
 	}
@@ -2595,7 +2595,6 @@ static void oplus_wired_shutdown(struct platform_device *pdev)
 	default:
 		break;
 	}
-	oplus_wired_typec_shutdown_deint();
 	return;
 }
 

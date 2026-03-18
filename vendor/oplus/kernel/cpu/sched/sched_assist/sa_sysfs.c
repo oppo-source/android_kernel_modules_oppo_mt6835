@@ -53,6 +53,12 @@ int global_sched_assist_scene;
 EXPORT_SYMBOL(global_sched_assist_scene);
 int global_lowend_plat_opt;
 EXPORT_SYMBOL(global_lowend_plat_opt);
+/*group sched default enabled*/
+int global_sched_group_enabled = 3;
+EXPORT_SYMBOL(global_sched_group_enabled);
+/*DDL default enabled*/
+int global_sched_ddl_enabled = 1;
+EXPORT_SYMBOL(global_sched_ddl_enabled);
 
 pid_t global_ux_task_pid = -1;
 pid_t global_im_flag_pid = -1;
@@ -213,6 +219,76 @@ static ssize_t proc_sched_assist_scene_read(struct file *file, char __user *buf,
 	size_t len = 0;
 
 	len = snprintf(buffer, sizeof(buffer), "scene=%d\n", global_sched_assist_scene);
+
+	return simple_read_from_buffer(buf, count, ppos, buffer, len);
+}
+
+static ssize_t proc_sched_group_enabled_write(struct file *file, const char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char buffer[20];
+	int err, val;
+
+	memset(buffer, 0, sizeof(buffer));
+
+	if (count > sizeof(buffer) - 1)
+		count = sizeof(buffer) - 1;
+
+	if (copy_from_user(buffer, buf, count))
+		return -EFAULT;
+
+	buffer[count] = '\0';
+	err = kstrtoint(strstrip(buffer), 10, &val);
+	if (err)
+		return err;
+
+	global_sched_group_enabled = val;
+
+	return count;
+}
+
+static ssize_t proc_sched_group_enabled_read(struct file *file, char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char buffer[20];
+	size_t len = 0;
+
+	len = snprintf(buffer, sizeof(buffer), "%d\n", global_sched_group_enabled);
+
+	return simple_read_from_buffer(buf, count, ppos, buffer, len);
+}
+
+static ssize_t proc_sched_ddl_enabled_write(struct file *file, const char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char buffer[20];
+	int err, val;
+
+	memset(buffer, 0, sizeof(buffer));
+
+	if (count > sizeof(buffer) - 1)
+		count = sizeof(buffer) - 1;
+
+	if (copy_from_user(buffer, buf, count))
+		return -EFAULT;
+
+	buffer[count] = '\0';
+	err = kstrtoint(strstrip(buffer), 10, &val);
+	if (err)
+		return err;
+
+	global_sched_ddl_enabled = val;
+
+	return count;
+}
+
+static ssize_t proc_sched_ddl_enabled_read(struct file *file, char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char buffer[20];
+	size_t len = 0;
+
+	len = snprintf(buffer, sizeof(buffer), "%d\n", global_sched_ddl_enabled);
 
 	return simple_read_from_buffer(buf, count, ppos, buffer, len);
 }
@@ -926,6 +1002,18 @@ static ssize_t proc_sched_impt_task_read(struct file *file, char __user *buf,
 	return simple_read_from_buffer(buf, count, ppos, buffer, len);
 }
 
+static const struct proc_ops proc_sched_group_enabled_fops = {
+	.proc_write		= proc_sched_group_enabled_write,
+	.proc_read		= proc_sched_group_enabled_read,
+	.proc_lseek		= default_llseek,
+};
+
+static const struct proc_ops proc_sched_ddl_enabled_fops = {
+	.proc_write		= proc_sched_ddl_enabled_write,
+	.proc_read		= proc_sched_ddl_enabled_read,
+	.proc_lseek		= default_llseek,
+};
+
 static const struct proc_ops proc_sched_assist_enabled_fops = {
 	.proc_write		= proc_sched_assist_enabled_write,
 	.proc_read		= proc_sched_assist_enabled_read,
@@ -1057,6 +1145,18 @@ int oplus_sched_assist_proc_init(void)
 		remove_proc_entry("sched_impt_task", d_sched_assist);
 	}
 
+	proc_node = proc_create("sched_group_enabled", 0666, d_sched_assist, &proc_sched_group_enabled_fops);
+	if (!proc_node) {
+		ux_err("failed to create proc node sched_group_enabled\n");
+		remove_proc_entry("sched_group_enabled", d_sched_assist);
+	}
+
+	proc_node = proc_create("sched_ddl_enabled", 0666, d_sched_assist, &proc_sched_ddl_enabled_fops);
+	if (!proc_node) {
+		ux_err("failed to create proc node sched_ddl_enabled\n");
+		remove_proc_entry("sched_ddl_enabled", d_sched_assist);
+	}
+
 #ifdef CONFIG_OPLUS_SCHED_GROUP_OPT
 	oplus_sched_group_init(d_sched_assist);
 #endif
@@ -1108,6 +1208,8 @@ void oplus_sched_assist_proc_deinit(void)
 	remove_proc_entry("lowend_plat_opt", d_sched_assist);
 	remove_proc_entry("sched_assist_scene", d_sched_assist);
 	remove_proc_entry("sched_assist_enabled", d_sched_assist);
+	remove_proc_entry("sched_group_enabled", d_sched_assist);
+	remove_proc_entry("sched_ddl_enabled", d_sched_assist);
 	remove_proc_entry(OPLUS_SCHEDASSIST_PROC_DIR, d_oplus_scheduler);
 	remove_proc_entry(OPLUS_SCHEDULER_PROC_DIR, NULL);
 }

@@ -1022,7 +1022,7 @@ struct GLUE_INFO {
 	unsigned long fgIsInSuspend;
 	char drv_own_caller[CALLER_LENGTH];
 	char fw_own_caller[CALLER_LENGTH];
-
+	u_int8_t fgWlanUevent;
 };
 
 typedef irqreturn_t(*PFN_WLANISR) (int irq, void *dev_id,

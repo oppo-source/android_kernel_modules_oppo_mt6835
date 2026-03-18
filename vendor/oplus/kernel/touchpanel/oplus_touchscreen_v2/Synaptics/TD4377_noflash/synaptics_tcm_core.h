@@ -160,6 +160,8 @@ enum test_item_bit {
 	TYPE_PT11 				= 11,
 	TYPE_DYNAMIC_RANGE_DOZE = 14,
 	TYPE_NOISE_DOZE			= 15,
+	TYPE_PT17 				= 17,
+	TYPE_PT18 				= 18,
 	TYPE_HYBRIDRAW_CAP      = 18,
 	TYPE_RAW_CAP            = 22,
 	TYPE_TREXSHORT_CUSTOM   = 25,
@@ -233,6 +235,9 @@ enum dynamic_config_id {
 	DC_GESTURE_MASK   = 0xFE,
 	DC_GLOVE_MODE_ENABLED = 0x0D,
 	DC_GLOVE_MODE_STATE = 0xF5,
+	DC_WATERPROOF_ENABLE = 0xFC,
+	DC_LOW_TEMP_ENABLE = 0xFD,
+	DC_UNDER_WATER = 0xF6,
 };
 
 enum command {
@@ -269,6 +274,7 @@ enum command {
 	CMD_DOWNLOAD_CONFIG = 0x30,
 	CMD_ENTER_PRODUCTION_TEST_MODE = 0x31,
 	CMD_GET_FEATURES = 0x32,
+	CMD_SET_LONG_CONFIG = 0x34,
 	CMD_GET_ROMBOOT_INFO = 0x40,
 	CMD_WRITE_PROGRAM_RAM = 0x41,
 	CMD_ROMBOOT_RUN_BOOTLOADER_FIRMWARE = 0x42,
@@ -332,6 +338,13 @@ enum flash_data {
 enum palm_mode {
 	PALM_TO_DEFAULT = 0,
 	PALM_TO_SLEEP   = 1,
+};
+
+enum diaphragm_mode {
+	DIAPHRAGM_DEFAULT_MODE = 0,
+	DIAPHRAGM_FILM_MODE = 1,
+	DIAPHRAGM_WATERPROO_MODE = 2,
+	DIAPHRAGM_FILM_WATERPROO_MODE = 3,
 };
 
 enum glove_mode {
@@ -503,6 +516,7 @@ struct syna_tcm_hcd {
 	struct synaptics_proc_operations *syna_ops;
 	struct firmware_headfile *p_firmware_headfile;
 	struct firmware *tcm_firmware_headfile;
+	struct touchpanel_data *ts;
 
 	struct workqueue_struct *helper_workqueue;
 	struct work_struct helper_work;
@@ -540,6 +554,7 @@ struct syna_tcm_hcd {
 	int zeroflash_init_done;
 	int check_uboot_failed_count;
 	int request_fw_image_id;
+	int tp_index;
 
 	struct completion config_complete;
 	struct mutex reset_mutex;
@@ -581,6 +596,7 @@ struct syna_tcm_hcd {
 	bool irq_trigger_hdl_support;
 	bool health_monitor_support;
 	bool health_monitor_v2_support;
+	bool pt17_pt18_test_support;
 };
 
 struct device_hcd {

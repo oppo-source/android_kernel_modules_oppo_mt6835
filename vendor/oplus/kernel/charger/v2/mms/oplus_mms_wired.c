@@ -39,10 +39,16 @@
 
 #define ONLINE_STATUS_ERR_CHECK_DELAY_MS	1000
 #define ONLINE_STATUS_ERR_CHECK_MAX		5
+#define OTG_OUTPUT_LEVEL_MAX			5
 
 enum oplus_usbtemp_timer_stage {
 	OPLUS_USBTEMP_TIMER_STAGE0 = 0,
 	OPLUS_USBTEMP_TIMER_STAGE1,
+};
+
+struct otg_output_config {
+	int otg_curr;
+	int otg_vol;
 };
 
 struct oplus_usbtemp_spec_config {
@@ -85,6 +91,7 @@ struct oplus_usbtemp_spec_config {
 	int usbtemp_max_temp_thr;
 	int usbtemp_temp_up_time_thr;
 	int usbtemp_otg_cc_boot_current_limit;
+	struct otg_output_config otg_output[OTG_OUTPUT_LEVEL_MAX];
 };
 typedef union {
 	int buf[24];
@@ -267,6 +274,8 @@ struct oplus_mms_wired {
 	struct delayed_work lpd_info_update_work;
 	struct oplus_lpd_spec_config lpd_spec;
 	bool set_icl_done;
+	int otg_cur;
+	bool support_adjust_reverse_chg_cur;
 };
 
 static struct oplus_mms_wired *g_mms_wired;
@@ -2274,6 +2283,22 @@ static void oplus_usbtemp_recover_work(struct work_struct *work)
 	oplus_usbtemp_recover_func(chip);
 }
 
+static int oplus_find_otg_output_level(struct oplus_mms_wired *chip, int vol)
+{
+	int i = 0;
+	int ret = 0;
+	struct oplus_usbtemp_spec_config *spec = &chip->usbtemp_spec;
+
+	for (i = 0; i < OTG_OUTPUT_LEVEL_MAX; i++) {
+		if (vol > spec->otg_output[i].otg_vol) {
+			ret = spec->otg_output[i].otg_curr;
+			break;
+		}
+	}
+
+	return ret;
+}
+
 static void  oplus_usbtemp_restart_work(struct work_struct *work)
 {
 	struct oplus_mms_wired *chip = container_of(
@@ -2350,8 +2375,6 @@ static int oplus_usbtemp_dischg_action(struct oplus_mms_wired *chip)
 	struct oplus_mms *vooc_topic;
 
 	vooc_topic = oplus_mms_get_by_name("vooc");
-	if (!vooc_topic)
-		return 0;
 #ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 	if (get_eng_version() != HIGH_TEMP_AGING) {
 #endif
@@ -2363,7 +2386,7 @@ static int oplus_usbtemp_dischg_action(struct oplus_mms_wired *chip)
 			chg_err("can't open cc, rc=%d\n", rc);
 		usleep_range(5000, 5000);
 		/*TODO*/
-		if(chip->vooc_charging) {
+		if(chip->vooc_charging && vooc_topic) {
 			oplus_api_switch_normal_chg(vooc_topic);
 			oplus_api_vooc_set_reset_sleep(vooc_topic);
 		}
@@ -2379,7 +2402,7 @@ static int oplus_usbtemp_dischg_action(struct oplus_mms_wired *chip)
 		chg_err("set vbus down");
 		oplus_chg_ic_func(chip->buck_ic,
 				  OPLUS_IC_FUNC_SET_USB_DISCHG_ENABLE, true);
-		if(chip->vooc_charging)
+		if(chip->vooc_charging && vooc_topic)
 			oplus_api_vooc_turn_off_fastchg(vooc_topic);
 #ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 	} else {
@@ -3613,9 +3636,12 @@ static void oplus_wired_subscribe_gauge_topic(struct oplus_mms *topic,
 
 static void oplus_wired_gauge_update_work(struct work_struct *work)
 {
+	int otg_curr = 0;
 	struct oplus_mms_wired *chip = container_of(work, struct oplus_mms_wired,
 						gauge_update_work);
 	union mms_msg_data data = { 0 };
+	struct oplus_usbtemp_spec_config *spec;
+	spec = &chip->usbtemp_spec;
 
 	oplus_mms_get_item_data(chip->gauge_topic, GAUGE_ITEM_VOL_MAX,
 				&data, false);
@@ -3638,6 +3664,14 @@ static void oplus_wired_gauge_update_work(struct work_struct *work)
 	chip->batt_curr = data.intval;
 	if (oplus_wired_is_present() && !chip->vooc_started)
 		oplus_wired_set_aicl_point();
+
+	if (chip->otg_enable && chip->support_adjust_reverse_chg_cur) {
+		otg_curr = oplus_find_otg_output_level(chip, chip->vbat_mv);
+		if (chip->otg_cur > otg_curr) {
+			chip->otg_cur = otg_curr;
+			oplus_wired_set_otg_boost_curr_limit(chip->otg_cur);
+		}
+	}
 }
 
 static bool oplus_wls_init_complete(struct oplus_mms_wired *chip)
@@ -3668,6 +3702,7 @@ static void oplus_wired_otg_enable_handler_work(struct work_struct *work)
 	bool enable;
 	enum typec_data_role role;
 	int rc;
+	int vbatt = 0;
 	struct oplus_usbtemp_spec_config *spec;
 
 	if (!chip)
@@ -3729,7 +3764,15 @@ static void oplus_wired_otg_enable_handler_work(struct work_struct *work)
 		if (rc < 0 && rc != -ENOTSUPP)
 			chg_err("can't disable vbus\n");
 
-		rc = oplus_wired_set_otg_boost_curr_limit(spec->usbtemp_otg_cc_boot_current_limit);
+		vbatt = oplus_gauge_get_batt_mvolts();
+
+		if (chip->support_adjust_reverse_chg_cur)
+			chip->otg_cur = oplus_find_otg_output_level(chip, vbatt);
+		else
+			chip->otg_cur = spec->usbtemp_otg_cc_boot_current_limit;
+
+		rc = oplus_wired_set_otg_boost_curr_limit(chip->otg_cur);
+
 		if (rc < 0 && rc != -ENOTSUPP)
 			chg_err("can't set otg boost curr limit\n");
 
@@ -5931,6 +5974,24 @@ static bool oplus_mms_wired_parse_from_cmdline(struct oplus_mms_wired *chip)
 	return false;
 }
 
+static void oplus_mms_wired_otg_output_parse_dt(struct oplus_mms_wired *chip,
+	struct device_node *node)
+{
+	struct oplus_usbtemp_spec_config *spec = &chip->usbtemp_spec;
+	int rc = 0;
+	int length = 0;
+
+	rc = of_property_count_elems_of_size(node, "oplus_spec,otg_output", sizeof(u32));
+	length = rc;
+	if (length >= OTG_OUTPUT_LEVEL_MAX * 2 || length <= 0) {
+		chg_err("length is too long or not valid, return");
+		return;
+	}
+
+	rc = of_property_read_u32_array(node, "oplus_spec,otg_output",
+		(u32 *)spec->otg_output, length);
+}
+
 static void oplus_mms_wired_usbtemp_v2_parse_dt(struct oplus_mms_wired *chip)
 {
 	struct oplus_usbtemp_spec_config *spec = &chip->usbtemp_spec;
@@ -6041,6 +6102,7 @@ static void oplus_mms_wired_usbtemp_v2_parse_dt(struct oplus_mms_wired *chip)
 	if (rc)
 		spec->usbtemp_otg_cc_boot_current_limit = OPCHG_USBTEMP_OTG_CC_BOOT_CURRENT_LIMIT;
 
+	oplus_mms_wired_otg_output_parse_dt(chip, node);
 	oplus_mms_wired_parse_from_cmdline(chip);
 }
 
@@ -6138,6 +6200,9 @@ static void oplus_mms_wired_parse_dt(struct oplus_mms_wired *chip)
 	if (chip->support_usbtemp_protect_v2)
 		oplus_mms_wired_usbtemp_v2_parse_dt(chip);
 	chip->high_temp_scheme = of_property_read_bool(node, "high-temp-scheme");
+
+	chip->support_adjust_reverse_chg_cur = of_property_read_bool(node, "oplus,support_adjust_reverse_chg_cur");
+	chg_info("support_adjust_reverse_chg_cur=%d\n", chip->support_adjust_reverse_chg_cur);
 }
 
 static int oplus_wired_otg_disable_vote_callback(struct votable *votable,
@@ -6220,23 +6285,6 @@ static int oplus_mms_wired_votable_init(struct oplus_mms_wired *chip)
 creat_flash_mode_votable_err:
 	destroy_votable(chip->otg_disable_votable);
 	return rc;
-}
-
-void oplus_wired_typec_shutdown_deint(void)
-{
-	struct oplus_mms_wired *chip = g_mms_wired;
-	int rc = 0;
-
-	if (chip == NULL) {
-		chg_err("chip is NULL");
-		return;
-	}
-
-	rc = oplus_chg_ic_func(chip->buck_ic, OPLUS_IC_FUNC_TYPEC_SHUTDOWN_DEINT);
-	if (rc < 0) {
-		chg_err("can't set typec shutdown deint, rc=%d\n", rc);
-	}
-	return;
 }
 
 static int oplus_mms_wired_probe(struct platform_device *pdev)

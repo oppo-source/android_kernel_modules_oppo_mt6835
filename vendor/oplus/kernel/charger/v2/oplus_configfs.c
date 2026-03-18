@@ -38,6 +38,7 @@
 #include <linux/completion.h>
 #include <linux/mutex.h>
 #include <oplus_sec.h>
+#include <oplus_chg_dual_cells_protection.h>
 
 struct oplus_sec_ic_test_res {
 	struct completion ack;
@@ -70,6 +71,7 @@ struct oplus_configfs_device {
 	struct oplus_mms *err_topic;
 	struct oplus_mms *cpa_topic;
 	struct oplus_mms *batt_bal_topic;
+	struct oplus_mms *protection_topic;
 	struct oplus_mms *retention_topic;
 	struct oplus_mms *plc_topic;
 	struct mms_subscribe *ufcs_subs;
@@ -154,6 +156,7 @@ struct oplus_configfs_device {
 	int eis_status;
 	int plc_status;
 	bool plc_user_enable;
+	bool batt_health;
 };
 
 static struct oplus_configfs_device *g_cfg_dev;
@@ -862,7 +865,9 @@ static ssize_t historic_soh_date_store(struct device *dev,
 		chg_err("sizeof(set_soh_data) > 128 failed\n");
 		return 0;
 	}
-	strncpy((char *)original_data, set_soh_data, SOH_BUFFER_SIZE);
+	strncpy((char *)original_data, set_soh_data, SOH_BUFFER_SIZE - 1);
+	original_data[SOH_BUFFER_SIZE - 1] = '\0';
+
 	chg_err("write digital signature %s\n", original_data);
 
 	/* read page data for digital signature */
@@ -946,6 +951,7 @@ static ssize_t batt_ic_sn_show(struct device *dev, struct device_attribute *attr
 	else if (strstr(batt_sn_buf, UI_SOH_SN_DATA_TEST_NULL_TAG))
 		memset(batt_date, 0, sizeof(batt_date));
 
+	batt_date[BATT_SN_SIZE] = '\0';
 	if (ret < 0)
 		chg_err("get battery batt_ic_sn_show date error");
 	else
@@ -2502,6 +2508,51 @@ static ssize_t sec_ic_test_show(
 }
 static DEVICE_ATTR_RW(sec_ic_test);
 
+static ssize_t dual_cells_batt_health_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int health_status;
+	int health_reason;
+	int ret;
+	struct oplus_configfs_device *chip = dev->driver_data;
+	if (!chip) {
+		chg_err("chip is NULL\n");
+		return -EINVAL;
+	}
+
+	ret = oplus_chg_get_dual_cells_batt_health(
+			chip->protection_topic, &health_status, &health_reason);
+	if (ret < 0)
+		return sprintf(buf, "unsupport");
+
+	chip->batt_health = health_status;
+	return sprintf(buf, "%d,%d\n", health_reason, health_status);
+}
+
+static ssize_t dual_cells_batt_health_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct oplus_configfs_device *chip = dev->driver_data;
+	int val = 0;
+
+	if (!chip) {
+		chg_err("chip is NULL\n");
+		return -EINVAL;
+	}
+	if (!buf) {
+		chg_err("buf is NULL\n");
+		return -EINVAL;
+	}
+
+	if (kstrtos32(buf, 0, &val)) {
+		chg_err("buf error\n");
+		return -EINVAL;
+	}
+
+	oplus_chg_set_dual_cells_batt_health(chip->protection_topic, val);
+
+	return count;
+}
+static DEVICE_ATTR_RW(dual_cells_batt_health);
+
 static struct device_attribute *oplus_battery_attributes[] = {
 	&dev_attr_authenticate,
 	&dev_attr_battery_cc,
@@ -2583,6 +2634,7 @@ static struct device_attribute *oplus_battery_attributes[] = {
 	&dev_attr_gauge_type,
 	&dev_attr_battery_seal_flag,
 	&dev_attr_sec_ic_test,
+	&dev_attr_dual_cells_batt_health,
 	NULL
 };
 
@@ -3320,7 +3372,6 @@ static ssize_t adapter_power_store(struct device *dev, struct device_attribute *
 	return count;
 }
 static DEVICE_ATTR_RW(adapter_power);
-
 
 static int protocol_type_by_user = -1;
 static ssize_t protocol_type_show(struct device *dev,
@@ -5099,6 +5150,19 @@ static void oplus_configfs_subscribe_retention_topic(struct oplus_mms *topic,
 		chip->retention_state = !!data.intval;
 }
 
+static void oplus_configfs_subscribe_protection_topic(struct oplus_mms *topic,
+					     void *prv_data)
+{
+	struct oplus_configfs_device *chip = prv_data;
+	union mms_msg_data data = { 0 };
+	int rc;
+
+	chip->protection_topic = topic;
+	rc = oplus_mms_get_item_data(chip->protection_topic, DUAL_CELLS_BATT_STATUS, &data, true);
+	if (rc >= 0)
+		chip->batt_health = !!data.intval;
+}
+
 static void oplus_configfs_plc_subs_callback(struct mms_subscribe *subs,
 					      enum mms_msg_type type, u32 id, bool sync)
 {
@@ -5205,6 +5269,7 @@ static __init int oplus_configfs_init(void)
 	oplus_mms_wait_topic("pps", oplus_configfs_subscribe_pps_topic, chip);
 	oplus_mms_wait_topic("retention", oplus_configfs_subscribe_retention_topic, chip);
 	oplus_mms_wait_topic("plc", oplus_configfs_subscribe_plc_topic, chip);
+	oplus_mms_wait_topic("protection", oplus_configfs_subscribe_protection_topic, chip);
 
 	return 0;
 

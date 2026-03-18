@@ -56,6 +56,7 @@
 #define SC6607_PID		0x6600
 #define PD_MSG_CRC_LEN 4
 #define PD_MSG_LEN_OVER_TOTAL_LENGTH 3
+#define PD_CCOPEN_TIMER	500 /* ms */
 
 #define CPS8851_VID     0x315C
 #define CPS8851_PID     0x8851
@@ -270,7 +271,12 @@ static int rt1711_block_read(struct i2c_client *i2c,
 	struct rt1711_chip *chip = i2c_get_clientdata(i2c);
 	int ret = 0;
 #ifdef CONFIG_RT_REGMAP
-	ret = rt_regmap_block_read(chip->m_dev, reg, len, dst);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (chip->chip_pid == CPS8851_PID)
+		ret = rt1711_read_device(chip->client, reg, len, dst);
+	else
+#endif
+		ret = rt_regmap_block_read(chip->m_dev, reg, len, dst);
 #else
 	ret = rt1711_read_device(chip->client, reg, len, dst);
 #endif /* #ifdef CONFIG_RT_REGMAP */
@@ -285,6 +291,11 @@ static int rt1711_block_write(struct i2c_client *i2c,
 	struct rt1711_chip *chip = i2c_get_clientdata(i2c);
 	int ret = 0;
 #ifdef CONFIG_RT_REGMAP
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (chip->chip_pid == CPS8851_PID)
+		ret = rt1711_write_device(chip->client, reg, len, src);
+	else
+#endif
 	ret = rt_regmap_block_write(chip->m_dev, reg, len, src);
 #else
 	ret = rt1711_write_device(chip->client, reg, len, src);
@@ -1192,8 +1203,8 @@ static int rt1711_tcpc_deinit(struct tcpc_device *tcpc)
 #endif
 
 	pr_info("%s shutdown\n", __func__);
-	if (chip->chip_id == SC2150A_DID) {
-		mdelay(150);
+	if (chip->chip_id == SC2150A_DID || chip->chip_id == CPS8851_DID) {
+		msleep(PD_CCOPEN_TIMER);
 		rt1711_i2c_write8(tcpc, RT1711H_REG_SWRESET, 1);
 	}
 #else
@@ -1939,10 +1950,25 @@ static int rt1711_i2c_resume(struct device *dev)
 	return 0;
 }
 
+static bool is_support_oplus_chg_v2(void)
+{
+	struct device_node *node;
+	bool is_framework_v2 = false;
+
+	node = of_find_node_by_path("/soc/oplus_chg_core");
+	if (node) {
+		is_framework_v2 =
+		    of_property_read_bool(node, "oplus,chg_framework_v2");
+		of_node_put(node);
+	} else {
+		is_framework_v2 =  false;
+	}
+	return is_framework_v2;
+}
+
 static void rt1711_shutdown(struct i2c_client *client)
 {
 	struct rt1711_chip *chip = i2c_get_clientdata(client);
-	struct device_node *node;
 
 	/* Please reset IC here */
 	if (chip != NULL) {
@@ -1952,10 +1978,14 @@ static void rt1711_shutdown(struct i2c_client *client)
 			i2c_smbus_write_byte_data(
 				client, RT1711H_REG_BMC_CTRL, 0x00);
 		}
-		node = of_find_node_by_path("/soc/oplus_chg_core");
-		if (node && of_property_read_bool(node, "oplus,chg_framework_v2"))
-			return;
-		tcpm_shutdown(chip->tcpc);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		if (chip->chip_pid == CPS8851_PID)
+			msleep(25);
+#endif
+		if (!is_support_oplus_chg_v2()) {
+			if (chip->tcpc)
+				tcpm_shutdown(chip->tcpc);
+		}
 	} else {
 		i2c_smbus_write_byte_data(
 			client, RT1711H_REG_SWRESET, 0x01);
