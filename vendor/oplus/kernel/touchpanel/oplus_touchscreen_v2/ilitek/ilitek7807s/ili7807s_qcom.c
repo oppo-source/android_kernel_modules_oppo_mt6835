@@ -1479,6 +1479,7 @@ void ili_report_ap_mode(u8 *buf, int len)
 		ilits->glove_mode = buf[ilits->tp_data_len - ILI_V2080_WATER_FLAG] & 0x01;
 		ilits->water_flag = (buf[ilits->tp_data_len - ILI_V2080_WATER_FLAG] & 0x02) >> 1;
 		ilits->thr = (s16)((buf[ilits->tp_data_len - ILI_V2080_THR_H8] << 8) | buf[ilits->tp_data_len - ILI_V2080_THR_L8]);
+		ILI_DBG("glove_mode = %d, water_flag = %d, thr = %d\n", ilits->glove_mode, ilits->water_flag, ilits->thr);
 	}
 
 	if (ilits->ts->health_monitor_support) {

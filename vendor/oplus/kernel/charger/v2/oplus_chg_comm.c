@@ -4320,7 +4320,7 @@ static void oplus_comm_show_ui_soc_decimal(struct work_struct *work)
 		if (temp_soc != 0)
 			oplus_comm_set_ui_soc(chip, temp_soc);
 		schedule_delayed_work(&chip->ui_soc_decimal_work, msecs_to_jiffies(UPDATE_TIME * 1000));
-	} else if (soc_decimal->ui_soc_decimal != 0) {
+	} else {
 		oplus_comm_ui_soc_decimal_deinit(chip);
 	}
 }
