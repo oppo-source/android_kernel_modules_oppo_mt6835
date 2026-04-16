@@ -2324,6 +2324,8 @@ static int init_parse_dts(struct device *dev, struct touchpanel_data *ts)
 
 	ts->tp_lcd_suspend_in_lp_support = of_property_read_bool(np, "tp_lcd_suspend_in_lp_support");
 	TP_INFO(ts->tp_index, "tp_lcd_suspend_in_lp_support is %d\n", ts->tp_lcd_suspend_in_lp_support);
+	ts->ili_use_new_driver_version = of_property_read_bool(np, "ili_use_new_driver_version");
+	TP_INFO(ts->tp_index, "ili_use_new_driver_version is %d\n", ts->ili_use_new_driver_version);
 
 	rc = of_property_read_u32(np, "vdd_2v8_volt", &ts->hw_res.vdd_volt);
 	if (rc < 0) {
