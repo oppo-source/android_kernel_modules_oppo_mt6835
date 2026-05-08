@@ -1807,7 +1807,7 @@ static void oplus_gauge_init_sili_status(struct oplus_mms_gauge *chip)
 		chip->deep_spec.sili_err, chip->deep_spec.support);
 }
 
-#define BAT_TYPE_MESSAGE_LEN       25
+#define BAT_TYPE_MESSAGE_LEN       36
 #define OPLUS_SILICON_TYPE_TAG     "silicon"
 #define OPLUS_GRAPHITE_TYPE_TAG    "graphite"
 #define OPLUS_BATT_TYPE_TAG        "battery_type="
@@ -3450,6 +3450,7 @@ static int oplus_mms_gauge_push_soh_coeff(struct oplus_mms_gauge *chip, int coef
 }
 
 #define DEEP_DISCHG_UPDATE_VOLT_DELTA 100
+
 int oplus_gauge_term_voltage_vote_callback(struct votable *votable, void *data, int volt, const char *client,
 						  bool step)
 {

@@ -1252,21 +1252,26 @@ static int sgm7220_tcpcdev_init(struct sgm7220_chip *chip, struct device *dev)
 	}
 #endif /* CONFIG_TCPC_VCONN_SUPPLY_MODE */
 
-	of_property_read_string(np, "sgm7220-tcpc,name", (char const **)&name);
-	len = strlen(name);
-	desc->name = kzalloc(len + 1, GFP_KERNEL);
-	if (!desc->name)
-		return -ENOMEM;
-	strncpy((char *)desc->name, name, strlen(name) + 1);
+	if (!of_property_read_string(np, "sgm7220-tcpc,name", (char const **)&name)) {
+		len = strlen(name);
+		desc->name = kzalloc(len + 1, GFP_KERNEL);
+		if (!desc->name)
+			return -ENOMEM;
+		strncpy((char *)desc->name, name, strlen(name) + 1);
 
-	chip->tcpc_desc = desc;
-	chip->tcpc = tcpc_device_register(dev, desc, &sgm7220_tcpc_ops, chip);
-	if (IS_ERR_OR_NULL(chip->tcpc))
+		chip->tcpc_desc = desc;
+		chip->tcpc = tcpc_device_register(dev, desc, &sgm7220_tcpc_ops, chip);
+		if (IS_ERR_OR_NULL(chip->tcpc))
+			return -EINVAL;
+
+		chip->tcpc->tcpc_flags = TCPC_FLAGS_LPM_WAKEUP_WATCHDOG;
+		chip->tcpc->typec_attach_old = TYPEC_UNATTACHED;
+		chip->tcpc->typec_attach_new = TYPEC_UNATTACHED;
+	} else {
+		dev_err(dev, "sgm7220-tcp-name dtsi property is not available\n");
 		return -EINVAL;
+	}
 
-	chip->tcpc->tcpc_flags = TCPC_FLAGS_LPM_WAKEUP_WATCHDOG;
-	chip->tcpc->typec_attach_old = TYPEC_UNATTACHED;
-	chip->tcpc->typec_attach_new = TYPEC_UNATTACHED;
 	return 0;
 }
 

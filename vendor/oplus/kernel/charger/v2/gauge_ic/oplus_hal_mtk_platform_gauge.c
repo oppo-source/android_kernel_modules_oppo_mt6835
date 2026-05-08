@@ -869,6 +869,8 @@ static int oplus_mt6375_gauge_get_gauge_car_c(struct oplus_chg_ic_dev *ic_dev, i
 		return -EINVAL;
 
 	rc = g_gauge_chip->gauge_ops->get_gauge_car_c(car_c);
+	/* Change unit from 0.1mAh to 1mAh, rounding to the nearest whole number.*/
+	*car_c = (*car_c + 5) / 10;
 	if (rc < 0) {
 		chg_err("failed to get car_c from mtk\n");
 		*car_c = 0;
@@ -1148,6 +1150,32 @@ static int oplus_mtk_get_vct(struct oplus_chg_ic_dev *ic_dev, int *value)
 	return 0;
 }
 
+#define GAUGE_INDEX_MAIN 0
+#define GAUGE_INDEX_SUB 1
+
+static int oplus_mtk_get_battery_dod0(struct oplus_chg_ic_dev *ic_dev, int index, int *dod0)
+{
+	if (g_gauge_chip == NULL || g_gauge_chip->gauge_ops == NULL) {
+		chg_err("g_gauge_chip is null.\n");
+		return -EINVAL;
+	}
+
+	if (g_gauge_chip->gauge_ops->get_battery_dod == NULL)
+		return -EINVAL;
+
+	switch (index) {
+	case GAUGE_INDEX_MAIN:
+	case GAUGE_INDEX_SUB:
+		*dod0 = g_gauge_chip->gauge_ops->get_battery_dod(index);
+		break;
+	default:
+		chg_info("index(=%d), over size\n", index);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static void *oplus_chg_get_func(struct oplus_chg_ic_dev *ic_dev,
 				enum oplus_chg_ic_func func_id)
 {
@@ -1297,6 +1325,10 @@ static void *oplus_chg_get_func(struct oplus_chg_ic_dev *ic_dev,
 	case OPLUS_IC_FUNC_GAUGE_GET_VCT:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_GET_VCT, oplus_mtk_get_vct);
 		break;
+	case OPLUS_IC_FUNC_GAUGE_GET_DOD0:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_GET_DOD0,
+						oplus_mtk_get_battery_dod0);
+		break;
 	default:
 		chg_err("this func(=%d) is not supported\n", func_id);
 		func = NULL;
@@ -1370,6 +1402,7 @@ static int mt6375_guage_driver_probe(struct platform_device *pdev)
 	int ic_index;
 	struct oplus_chg_ic_cfg ic_cfg = { 0 };
 	int rc = 0;
+	struct device_node *node = NULL;
 
 	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
 	if (!chip) {
@@ -1414,13 +1447,14 @@ static int mt6375_guage_driver_probe(struct platform_device *pdev)
 	chip->protect_check_done = true;
 
 	atomic_set(&chip->locked, 0);
-	rc = of_property_read_u32(chip->dev->of_node, "oplus,ic_type",
+	node = oplus_get_node_by_child_gauge(chip->dev->of_node);
+	rc = of_property_read_u32(node, "oplus,ic_type",
 				  &ic_type);
 	if (rc < 0) {
 		chg_err("can't get ic type, rc=%d\n", rc);
 		goto error;
 	}
-	rc = of_property_read_u32(chip->dev->of_node, "oplus,ic_index",
+	rc = of_property_read_u32(node, "oplus,ic_index",
 				  &ic_index);
 	if (rc < 0) {
 		chg_err("can't get ic index, rc=%d\n", rc);

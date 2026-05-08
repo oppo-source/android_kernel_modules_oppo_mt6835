@@ -79,6 +79,7 @@
 #define REG02_SGM41515_FAST_CHG_CURRENT_LIMIT_OFFSET   0
 #define REG02_SGM41515_FAST_CHG_CURRENT_LIMIT_STEP     60
 #define REG02_SGM41515_FAST_CHG_CURRENT_LIMIT_2000MA   2000
+#define REG02_SGM41515_FAST_CHG_CURRENT_LIMIT_500MA    500
 
 /* Address:03h */
 #define REG03_SGM41515_ADDRESS                         0x03
@@ -137,6 +138,7 @@
 #define REG06_SGM41515_OVP_14P0V                       (BIT(7) | BIT(6))
 
 #define REG06_SGM41515_OTG_VLIM_MASK                   (BIT(5) | BIT(4))
+#define REG06_SGM41515_OTG_VLIM_SHIFT                  4
 #define REG06_SGM41515_OTG_VLIM_OFFSET                 4850
 #define REG06_SGM41515_OTG_VLIM_MAXMV                  5300
 #define REG06_SGM41515_OTG_VLIM_STEP                   150

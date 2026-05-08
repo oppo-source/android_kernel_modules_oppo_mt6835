@@ -1171,8 +1171,35 @@
                 "write": false,
                 "overwrite": false
             }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_BUCK_GET_VBAT_PWR",
+            "desc": {
+                "zh": "获取电池输出到系统的电压"
+            },
+            "auto_debug_code": true,
+            "parameter_list": ["int *"],
+            "parameter_desc": [
+                {
+                    "range": "0-*",
+                    "type": "out",
+                    "desc": {
+                        "zh": "vbat pwr电压"
+                    }
+                }
+            ],
+            "vict": {
+                "read": {
+                    "cmd": "vict -f {id} -G vic-*",
+                    "desc": {
+                        "zh": "N/A"
+                    }
+                },
+                "write": false,
+                "overwrite": false
+            }
         }
     ],
 
-    "version": "V5.1:35:872bf326026a26d0363107590618bf9f3815f2be63d3a101846a436086f0aec8"
+    "version": "V6.0:36:755b5f4b11ebc43ba99dddb8e4ff3855514abcdda878ed2b8a72230f478a4357"
 }

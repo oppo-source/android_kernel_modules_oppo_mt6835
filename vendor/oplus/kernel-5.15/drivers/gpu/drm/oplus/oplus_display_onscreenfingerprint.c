@@ -1350,7 +1350,7 @@ int oplus_ofp_video_mode_aod_handle(void *drm_crtc, void *mtk_panel_ext, void *d
 
 	/* due to aod sequence requirements, the aod of video mode is bound to 30hz timing */
 	OFP_INFO("video mode aod state:%d, refresh_rate:%d\n", oplus_ofp_get_aod_state(), refresh_rate);
-	if (!oplus_ofp_get_aod_state() && (refresh_rate == 30)) {
+	if (!oplus_ofp_get_aod_state() && (refresh_rate == 30) && (last_refresh_rate == 30)) {
 		oplus_ofp_set_aod_state(true);
 		/* aod on */
 		if (ext && ext->funcs && ext->funcs->doze_enable) {
@@ -1367,7 +1367,7 @@ int oplus_ofp_video_mode_aod_handle(void *drm_crtc, void *mtk_panel_ext, void *d
 		if (ext && ext->funcs && ext->funcs->doze_disable) {
 			OFP_INFO("debug for doze_disable\n");
 			ext->funcs->doze_disable(drm_panel, mtk_dsi, dcs_write_gce, handle);
-			oplus_ofp_set_aod_state(false);
+			oplus_ofp_aod_off_status_handle(mtk_crtc);
 		}
 	}
 	last_refresh_rate = refresh_rate;
@@ -1419,7 +1419,8 @@ int oplus_ofp_aod_off_set(void)
 	if (oplus_ofp_get_aod_state() && p_oplus_ofp_params->doze_active != 0) {
 		OFP_INFO("queue aod off set work\n");
 		queue_work(p_oplus_ofp_params->aod_off_set_wq, &p_oplus_ofp_params->aod_off_set_work);
-		oplus_ofp_set_aod_state(false);
+		if (!oplus_ofp_video_mode_30hz_aod_is_enabled())
+			oplus_ofp_set_aod_state(false);
 	}
 	oplus_disp_trace_end("oplus_ofp_aod_off_set");
 

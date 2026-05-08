@@ -1047,7 +1047,7 @@ static int aw35616_tcpcdev_init(struct aw35616_chip *chip, struct device *dev)
 
 	chip->tcpc = tcpc_device_register(dev,
 			desc, &aw35616_tcpc_ops, chip);
-	if (IS_ERR(chip->tcpc))
+	if (IS_ERR_OR_NULL(chip->tcpc))
 		return -EINVAL;
 
 	chip->tcpc->typec_attach_old = TYPEC_UNATTACHED;

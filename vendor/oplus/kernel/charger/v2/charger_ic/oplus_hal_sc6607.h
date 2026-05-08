@@ -635,6 +635,7 @@ enum {
 /* Register 32h */
 #define SC6607_BUCK_ICHG_OFFSET		0
 #define SC6607_BUCK_ICHG_STEP		50
+#define SC6607_BUCK_ICHG_500MA		500
 
 /* Register 34h */
 #define SC6607_BUCK_IINDPM_OFFSET		100
@@ -1028,6 +1029,10 @@ struct sc6607 {
 	struct delayed_work charger_suspend_recovery_work;
 
 	struct delayed_work flash_mode_checkout_work;
+
+	struct votable *wired_icl_votable;
+	struct votable *wired_fcc_votable;
+	struct work_struct rerun_votable_work;
 };
 
 #ifdef CONFIG_OPLUS_CHARGER_MTK

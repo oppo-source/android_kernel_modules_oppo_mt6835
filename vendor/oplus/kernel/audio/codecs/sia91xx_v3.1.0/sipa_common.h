@@ -36,7 +36,7 @@
 #include <linux/version.h>
 
 
-#define SIPA_DRIVER_VERSION					("3.1.0d-0506")
+#define SIPA_DRIVER_VERSION					("3.1.0d-1016")
 #define SIPA_MAX_CHANNEL_SUPPORT			(8)
 
 struct sipa_err {
@@ -127,7 +127,7 @@ typedef struct sipa_dev_s {
 	uint32_t max_f0;
 	uint32_t need_f0_cali;
 #ifdef CONFIG_DEBUG_FS
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
 	struct dentry *dbg_dir;
 #else
 	struct proc_dir_entry *dbg_dir;

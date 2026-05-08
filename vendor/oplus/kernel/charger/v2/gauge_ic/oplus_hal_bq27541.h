@@ -648,6 +648,7 @@ struct chip_bq27541 {
 	unsigned int *afi_buf_len;
 	u8 *bq28z610_afi_buf;
 	int bq28z610_afi_cnt;
+	bool fast_sampling_enable;
 	bool batt_bq28z610;
 	bool batt_bq27z561;
 	bool batt_nfg8011b;

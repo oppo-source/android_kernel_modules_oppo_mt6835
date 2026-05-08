@@ -1803,9 +1803,14 @@ static int sc6607_cp_get_work_status(struct oplus_chg_ic_dev *ic_dev, bool *star
 	}
 	chip = oplus_chg_ic_get_priv_data(ic_dev);
 
-	rc = sc6607_field_read(chip, F_CP_EN, &data);
+	if (!chip) {
+		chg_err("chip is NULL\n");
+		return -ENODEV;
+	}
+
+	rc = sc6607_field_read(chip, F_SWITCHING_STAT, &data);
 	if (rc < 0) {
-		chg_err("read F_CP_EN error, rc=%d\n", rc);
+		chg_err("read F_SWITCHING_STAT error, rc=%d\n", rc);
 		return rc;
 	}
 

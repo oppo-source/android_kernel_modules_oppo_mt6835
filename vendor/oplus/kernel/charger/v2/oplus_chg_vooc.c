@@ -132,6 +132,7 @@ struct oplus_vooc_config {
 	uint32_t vooc_curr_table_type;
 	bool voocphy_bidirect_cp_support;
 	uint32_t vooc_abnormal_adapter_power_max;
+	int32_t vooc_full_recheck_temp;
 } __attribute__((packed));
 
 struct oplus_chg_vooc {
@@ -280,6 +281,7 @@ struct oplus_chg_vooc {
 	int efficient_vooc_normal_high_temp;
 	int fastchg_batt_temp_status;
 	int vooc_temp_cur_range;
+	int vooc_cool_full_temp_range;
 	int vooc_strategy_change_count;
 	int connect_error_count_level;
 	int normal_connect_count_level;
@@ -546,6 +548,10 @@ static void oplus_turn_off_fastchg(struct oplus_chg_vooc *chip);
 static int oplus_vooc_get_real_wired_type(struct oplus_chg_vooc *chip);
 static int oplus_voocphy_get_fastchg_commu_ing(struct oplus_mms *topic,
 					 union mms_msg_data *data);
+static void oplus_vooc_rang_rise_update(struct oplus_chg_vooc *chip);
+static void oplus_vooc_query_temp_range(struct oplus_chg_vooc *chip, int vbat_temp_cur,
+	int *temp_cur_range, int *batt_temp_status);
+static void oplus_vooc_check_temp_range(struct oplus_chg_vooc *chip, int cur_temp);
 
 __maybe_unused static bool is_err_topic_available(struct oplus_chg_vooc *chip)
 {
@@ -1030,7 +1036,7 @@ static bool oplus_vooc_skip_check_volt(struct oplus_chg_vooc *chip)
 	return true;
 }
 
-#define VOOC_BAD_VOLT_INDEX 2
+#define VOOC_BAD_VOLT_INDEX 3
 static bool oplus_vooc_batt_volt_is_good(struct oplus_chg_vooc *chip)
 {
 	struct oplus_vooc_spec_config *spec = &chip->spec;
@@ -1065,6 +1071,7 @@ static bool oplus_vooc_batt_volt_is_good(struct oplus_chg_vooc *chip)
 	switch (temp_region) {
 	case TEMP_REGION_COLD:
 	case TEMP_REGION_LITTLE_COLD:
+	case TEMP_REGION_LITTLE_COLD_HIGH:
 	case TEMP_REGION_COOL:
 		index = TEMP_REGION_COOL - VOOC_BAD_VOLT_INDEX;
 		break;
@@ -1084,6 +1091,12 @@ static bool oplus_vooc_batt_volt_is_good(struct oplus_chg_vooc *chip)
 		chg_err("unknown temp region, %d\n", temp_region);
 		return false;
 	}
+
+	if (index < 0)
+		return false;
+
+	if (index >= VOOC_BAT_VOLT_REGION)
+		index = VOOC_BAT_VOLT_REGION - 1;
 
 	if (charger_suspend)
 		bad_vol = spec->vooc_bad_volt_suspend[index];
@@ -1212,12 +1225,16 @@ oplus_vooc_fastchg_allow_or_enable_check(struct oplus_chg_vooc *chip)
 	int curr_limit = 0;
 	bool mos_status = true;
 	int chg_type;
+	int vooc_temp_range;
 
 	if (chip->fastchg_started)
 		return;
 
 	if (chip->fastchg_allow)
 		goto enable_check;
+
+	oplus_vooc_query_temp_range(chip, chip->temperature, &vooc_temp_range, NULL);
+	chg_info("temp:%d, temp_range:%d", chip->temperature, vooc_temp_range);
 
 	if (is_client_vote_enabled(chip->vooc_not_allow_votable,
 				   BATT_TEMP_VOTER)) {
@@ -1271,6 +1288,17 @@ oplus_vooc_fastchg_allow_or_enable_check(struct oplus_chg_vooc *chip)
 		}
 	}
 
+	if (is_client_vote_enabled(chip->vooc_not_allow_votable, CHG_FULL_COOL_VOTER)) {
+		if (vooc_temp_range > chip->vooc_cool_full_temp_range) {
+			chg_info("allow svooc charging, cur_temp_range:%d, full_temp_range:%d, temp:%d",
+				 vooc_temp_range, chip->vooc_cool_full_temp_range, chip->temperature);
+			oplus_vooc_check_temp_range(chip, chip->temperature);
+			chip->vooc_cool_full_temp_range = FASTCHG_TEMP_RANGE_MAX;
+			vote(chip->vooc_not_allow_votable, CHG_FULL_COOL_VOTER, false,
+				0, false);
+		}
+	}
+
 skip_vooc_warm_check:
 enable_check:
 	if (!chip->fastchg_disable)
@@ -1281,20 +1309,6 @@ enable_check:
 		    (chip->efficient_vooc_normal_high_temp - BATT_TEMP_HYST)) {
 			vote(chip->vooc_disable_votable, WARM_FULL_VOTER, false,
 			     0, false);
-		}
-	}
-
-	if (is_client_vote_enabled(chip->vooc_disable_votable,
-				   CHG_FULL_COOL_VOTER)) {
-		if (chip->temperature >= chip->efficient_vooc_cool_temp &&
-		    chip->temperature < spec->vooc_high_temp) {
-			oplus_vooc_get_temp_range(chip, chip->temperature);
-			if (chip->vooc_temp_cur_range > FASTCHG_TEMP_RANGE_COOL) {
-				chip->efficient_vooc_cool_temp = spec->vooc_cool_temp;
-				chip->efficient_vooc_cool_temp -= VOOC_TEMP_RANGE_THD;
-				vote(chip->vooc_disable_votable, CHG_FULL_COOL_VOTER, false,
-					0, false);
-			}
 		}
 	}
 
@@ -2173,6 +2187,9 @@ static void oplus_vooc_fastchg_exit(struct oplus_chg_vooc *chip,
 		if (chip->config.vooc_version < VOOC_VERSION_5_0)
 			oplus_vooc_switch_normal_chg(chip);
 	}
+	chg_info("set adsp ovp normal\n");
+	oplus_set_ovp_forced(false);
+
 	oplus_vooc_set_vooc_started(chip, false);
 
 	chip->bcc_curr_count = 0;
@@ -2244,41 +2261,60 @@ static int oplus_vooc_get_min_curr_level(struct oplus_chg_vooc *chip,
 	}
 }
 
+static void oplus_vooc_query_temp_range(struct oplus_chg_vooc *chip, int vbat_temp_cur,
+					int *temp_cur_range, int *batt_temp_status)
+{
+	if (vbat_temp_cur < chip->efficient_vooc_little_cold_temp) { /*0-5C*/
+		if (temp_cur_range)
+			*temp_cur_range = FASTCHG_TEMP_RANGE_LITTLE_COLD;
+		if (batt_temp_status)
+			*batt_temp_status = BAT_TEMP_LITTLE_COLD;
+	} else if (vbat_temp_cur < chip->efficient_vooc_cool_temp) { /*5-12C*/
+		if (temp_cur_range)
+			*temp_cur_range = FASTCHG_TEMP_RANGE_COOL;
+		if (batt_temp_status)
+			*batt_temp_status = BAT_TEMP_COOL;
+	} else if (vbat_temp_cur <
+		   chip->efficient_vooc_little_cool_temp) { /*12-18C*/
+		if (temp_cur_range)
+				*temp_cur_range = FASTCHG_TEMP_RANGE_LITTLE_COOL;
+		if (batt_temp_status)
+				*batt_temp_status = BAT_TEMP_LITTLE_COOL;
+	} else if (chip->spec.vooc_little_cool_high_temp != -EINVAL &&
+	    vbat_temp_cur < chip->efficient_vooc_little_cool_high_temp) {
+		if (temp_cur_range)
+			*temp_cur_range = FASTCHG_TEMP_RANGE_LITTLE_COOL_HIGH;
+		if (batt_temp_status)
+			*batt_temp_status = BAT_TEMP_LITTLE_COOL_HIGH;
+	} else if (vbat_temp_cur <
+		   chip->efficient_vooc_normal_low_temp) { /*16-35C*/
+		if (temp_cur_range)
+			*temp_cur_range = FASTCHG_TEMP_RANGE_NORMAL_LOW;
+		if (batt_temp_status)
+			*batt_temp_status = BAT_TEMP_NORMAL_LOW;
+	} else { /*25C-43C*/
+		if (chip->spec.vooc_normal_high_temp == -EINVAL ||
+		    vbat_temp_cur <
+			    chip->efficient_vooc_normal_high_temp) { /*35C-43C*/
+			if (temp_cur_range)
+				*temp_cur_range = FASTCHG_TEMP_RANGE_NORMAL_HIGH;
+			if (batt_temp_status)
+				*batt_temp_status = BAT_TEMP_NORMAL_HIGH;
+		} else {
+			if (temp_cur_range)
+				*temp_cur_range = FASTCHG_TEMP_RANGE_WARM;
+			if (batt_temp_status)
+				*batt_temp_status = BAT_TEMP_WARM;
+		}
+	}
+}
+
 static int oplus_vooc_get_temp_range(struct oplus_chg_vooc *chip,
 				     int vbat_temp_cur)
 {
 	int ret = 0;
 
-	if (vbat_temp_cur < chip->efficient_vooc_little_cold_temp) { /*0-5C*/
-		chip->vooc_temp_cur_range = FASTCHG_TEMP_RANGE_LITTLE_COLD;
-		chip->fastchg_batt_temp_status = BAT_TEMP_LITTLE_COLD;
-	} else if (vbat_temp_cur < chip->efficient_vooc_cool_temp) { /*5-12C*/
-		chip->vooc_temp_cur_range = FASTCHG_TEMP_RANGE_COOL;
-		chip->fastchg_batt_temp_status = BAT_TEMP_COOL;
-	} else if (vbat_temp_cur <
-		   chip->efficient_vooc_little_cool_temp) { /*12-18C*/
-		chip->vooc_temp_cur_range = FASTCHG_TEMP_RANGE_LITTLE_COOL;
-		chip->fastchg_batt_temp_status = BAT_TEMP_LITTLE_COOL;
-	} else if (chip->spec.vooc_little_cool_high_temp != -EINVAL &&
-	    vbat_temp_cur < chip->efficient_vooc_little_cool_high_temp) {
-		chip->vooc_temp_cur_range = FASTCHG_TEMP_RANGE_LITTLE_COOL_HIGH;
-		chip->fastchg_batt_temp_status = BAT_TEMP_LITTLE_COOL_HIGH;
-	} else if (vbat_temp_cur <
-		   chip->efficient_vooc_normal_low_temp) { /*16-35C*/
-		chip->vooc_temp_cur_range = FASTCHG_TEMP_RANGE_NORMAL_LOW;
-		chip->fastchg_batt_temp_status = BAT_TEMP_NORMAL_LOW;
-	} else { /*25C-43C*/
-		if (chip->spec.vooc_normal_high_temp == -EINVAL ||
-		    vbat_temp_cur <
-			    chip->efficient_vooc_normal_high_temp) { /*35C-43C*/
-			chip->vooc_temp_cur_range =
-				FASTCHG_TEMP_RANGE_NORMAL_HIGH;
-			chip->fastchg_batt_temp_status = BAT_TEMP_NORMAL_HIGH;
-		} else {
-			chip->vooc_temp_cur_range = FASTCHG_TEMP_RANGE_WARM;
-			chip->fastchg_batt_temp_status = BAT_TEMP_WARM;
-		}
-	}
+	oplus_vooc_query_temp_range(chip, vbat_temp_cur, &chip->vooc_temp_cur_range, &chip->fastchg_batt_temp_status);
 	chg_info("vooc_temp_cur_range[%d], vbat_temp_cur[%d]",
 		 chip->vooc_temp_cur_range, vbat_temp_cur);
 
@@ -3114,6 +3150,8 @@ static void oplus_vooc_fastchg_work(struct work_struct *work)
 	int temp_curr;
 	int vooc_curr = get_effective_result(chip->vooc_curr_votable);
 	union mms_msg_data msg_data = { 0 };
+	int full_recheck_temp_cur_range = -1;
+
 
 	usleep_range(2000, 2000);
 	/* TODO: check data gpio val */
@@ -3304,6 +3342,9 @@ static void oplus_vooc_fastchg_work(struct work_struct *work)
 		break;
 	case VOOC_NOTIFY_NORMAL_TEMP_FULL:
 		charger_delay_check = true;
+		if (chip->config.vooc_full_recheck_temp != -EINVAL)
+			oplus_vooc_query_temp_range(chip, chip->config.vooc_full_recheck_temp,
+						    &full_recheck_temp_cur_range, NULL);
 		if (spec->vooc_normal_high_temp != -EINVAL &&
 		    chip->vooc_temp_cur_range == FASTCHG_TEMP_RANGE_WARM) {
 			vote(chip->vooc_disable_votable, WARM_FULL_VOTER, true,
@@ -3311,10 +3352,10 @@ static void oplus_vooc_fastchg_work(struct work_struct *work)
 			oplus_vooc_reset_temp_range(chip);
 			oplus_set_fast_status(chip,
 					      CHARGER_STATUS_FAST_TO_WARM);
-		} else if (spec->vooc_cool_temp != -EINVAL &&
-		    chip->vooc_temp_cur_range == FASTCHG_TEMP_RANGE_COOL) {
-			vote(chip->vooc_disable_votable, CHG_FULL_COOL_VOTER, true,
-			     1, false);
+		} else if (chip->vooc_temp_cur_range <= full_recheck_temp_cur_range) {
+			chip->vooc_cool_full_temp_range = chip->vooc_temp_cur_range;
+			chg_info("full_cool at temp range:%d", chip->vooc_cool_full_temp_range);
+			vote(chip->vooc_not_allow_votable, CHG_FULL_COOL_VOTER, true, 1, false);
 			oplus_set_fast_status(chip,
 					      CHARGER_STATUS_FAST_TO_NORMAL);
 		} else {
@@ -3992,7 +4033,7 @@ static void oplus_vooc_plugin_work(struct work_struct *work)
 		     false);
 		vote(chip->vooc_disable_votable, WARM_FULL_VOTER, false, 0,
 		     false);
-		vote(chip->vooc_disable_votable, CHG_FULL_COOL_VOTER, false, 0,
+		vote(chip->vooc_not_allow_votable, CHG_FULL_COOL_VOTER, false, 0,
 		     false);
 		vote(chip->vooc_disable_votable, BAD_CONNECTED_VOTER, false, 0,
 		     false);
@@ -4197,8 +4238,6 @@ static void oplus_vooc_comm_subs_callback(struct mms_subscribe *subs,
 			break;
 		case COMM_ITEM_TEMP_REGION:
 			break;
-		case COMM_ITEM_FCC_GEAR:
-			break;
 		case COMM_ITEM_COOL_DOWN:
 			oplus_mms_get_item_data(chip->comm_topic, id, &data,
 						false);
@@ -4206,6 +4245,7 @@ static void oplus_vooc_comm_subs_callback(struct mms_subscribe *subs,
 			break;
 		case COMM_ITEM_CHARGING_DISABLE:
 		case COMM_ITEM_CHARGE_SUSPEND:
+		case COMM_ITEM_FLASH_MODE:
 			schedule_work(&chip->comm_charge_disable_work);
 			break;
 		case COMM_ITEM_SHELL_TEMP:
@@ -4286,7 +4326,7 @@ static void oplus_vooc_subscribe_comm_topic(struct oplus_mms *topic,
 		if (!!data.intval)
 			disable = true;
 	}
-	vote(chip->vooc_disable_votable, USER_VOTER, disable, disable, false);
+	vote(chip->vooc_not_allow_votable, USER_VOTER, disable, disable, false);
 
 	rc = oplus_mms_get_item_data(chip->comm_topic, COMM_ITEM_UNWAKELOCK,
 				     &data, true);
@@ -4807,6 +4847,25 @@ static void oplus_comm_charge_disable_clear_suspend_vote(struct oplus_chg_vooc *
 		     0, false);
 }
 
+static bool oplus_vooc_get_flash_mode(struct oplus_chg_vooc *chip)
+{
+	union mms_msg_data data = { 0 };
+	int rc;
+
+	if (!chip || !chip->comm_topic) {
+		chg_err("invalid chip or comm_topic\n");
+		return false;
+	}
+
+	rc = oplus_mms_get_item_data(chip->comm_topic, COMM_ITEM_FLASH_MODE,
+				     &data, false);
+	if (rc < 0) {
+		chg_err("can't get flashmode status, rc=%d", rc);
+		data.intval = false;
+	}
+	return (!!data.intval);
+}
+
 static void oplus_comm_charge_disable_work(struct work_struct *work)
 {
 	struct oplus_chg_vooc *chip = container_of(work, struct oplus_chg_vooc,
@@ -4836,6 +4895,8 @@ static void oplus_comm_charge_disable_work(struct work_struct *work)
 			disable = true;
 	}
 
+	disable |= oplus_vooc_get_flash_mode(chip);
+
 	if (disable) {
 		cancel_delayed_work_sync(&chip->vooc_switch_check_work);
 		chg_info("cancel_delayed_work_sync vooc_switch_check_work\n");
@@ -4848,7 +4909,7 @@ static void oplus_comm_charge_disable_work(struct work_struct *work)
 
 	oplus_comm_charge_disable_clear_suspend_vote(chip, disable);
 
-	vote(chip->vooc_disable_votable, USER_VOTER, disable, disable, false);
+	vote(chip->vooc_not_allow_votable, USER_VOTER, disable, disable, false);
 
 	if (!chip->fastchg_started && disable &&
 	    !is_client_vote_enabled(chip->vooc_disable_votable,
@@ -4866,7 +4927,7 @@ static void oplus_comm_charge_disable_work(struct work_struct *work)
 	vote(chip->vooc_disable_votable, TIMEOUT_VOTER, false, 0, false);
 	vote(chip->vooc_disable_votable, CHG_FULL_VOTER, false, 0, false);
 	vote(chip->vooc_disable_votable, WARM_FULL_VOTER, false, 0, false);
-	vote(chip->vooc_disable_votable, CHG_FULL_COOL_VOTER, false, 0, false);
+	vote(chip->vooc_not_allow_votable, CHG_FULL_COOL_VOTER, false, 0, false);
 	vote(chip->vooc_disable_votable, BATT_TEMP_VOTER, false, 0, false);
 	vote(chip->vooc_disable_votable, CURR_LIMIT_VOTER, false, 0, false);
 
@@ -5513,6 +5574,11 @@ static int oplus_chg_vooc_parse_dt(struct oplus_chg_vooc *chip,
 	if (rc < 0) {
 		chg_err("oplus_spec,vooc_bad_volt_check_head_mask reading failed, rc=%d\n", rc);
 		config->vooc_bad_volt_check_head_mask = 0;
+	}
+	rc = of_property_read_u32(node, "oplus_spec,vooc_full_recheck_temp", &config->vooc_full_recheck_temp);
+	if (rc < 0) {
+		chg_info("not support vooc full recheck");
+		config->vooc_full_recheck_temp = -EINVAL;
 	}
 
 skip_vooc_bad_volt_check:

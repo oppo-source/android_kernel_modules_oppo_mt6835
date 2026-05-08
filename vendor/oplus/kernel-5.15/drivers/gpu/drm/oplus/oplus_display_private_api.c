@@ -492,8 +492,8 @@ int panel_serial_number_read(struct drm_crtc *crtc, char cmd, int num)
 		ddic_dsi_send_cmd(4, ILI97601A);
 	} else if (!strcmp(panel_name, "panel_ae211_p_3_a0027_dsi_vdo")) {
 		pr_info("panel_ae211_p_3_a0027_dsi_vdo set page\n");
-	} else if (!strcmp(panel_name, "panel_ae211_p_3_a0025_dsi_vdo")) {
-		pr_info("panel_ae211_p_3_a0025_dsi_vdo set page\n");
+	} else if (!strcmp(panel_name, "panel_ae211_p_3_2_a0025_dsi_vdo")) {
+		pr_info("panel_ae211_p_3_2_a0025_dsi_vdo set page\n");
 	}
 
 	while (count > 0) {
@@ -542,7 +542,7 @@ int panel_serial_number_read(struct drm_crtc *crtc, char cmd, int num)
 			|| (!strcmp(panel_name, "ac388_p_7_a0025_dsi_vdo"))) {
 			panel_serial_info.reg_index = 0;
 			panel_serial_info.year      = ((para[panel_serial_info.reg_index] & 0xF0) >> 4) + 9;
-		} else if (!strcmp(panel_name, "panel_ae211_p_3_a0025_dsi_vdo")) {
+		} else if (!strcmp(panel_name, "panel_ae211_p_3_2_a0025_dsi_vdo")) {
 			panel_serial_info.reg_index = 0;
 			panel_serial_info.year      = ((para[panel_serial_info.reg_index] & 0xF0) >> 4) + 8;
 		} else if (!strcmp(panel_name, "panel_ae211_p_3_a0027_dsi_vdo")) {

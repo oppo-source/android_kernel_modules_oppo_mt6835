@@ -754,6 +754,35 @@ static int oplus_chg_vg_get_batt_curr(struct oplus_chg_ic_dev *ic_dev,
 	return rc;
 }
 
+static int oplus_chg_vg_set_fast_sampling(
+	struct oplus_chg_ic_dev *ic_dev, bool enable)
+{
+	struct oplus_virtual_gauge_ic *chip;
+	int i;
+	int rc = 0;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+
+	chip = oplus_chg_ic_get_drvdata(ic_dev);
+	for (i = 0; i < chip->child_num; i++) {
+		if (!func_is_support(&chip->child_list[i],
+				     OPLUS_IC_FUNC_GAUGE_SET_FAST_SAMPLING)) {
+			rc = (rc == 0) ? -ENOTSUPP : rc;
+			continue;
+		}
+		rc = oplus_chg_ic_func(chip->child_list[i].ic_dev,
+				       OPLUS_IC_FUNC_GAUGE_SET_FAST_SAMPLING, enable);
+		if (rc < 0)
+			chg_err("child ic[%d] %s gauge error, rc=%d\n", i,
+				enable ? "enable" : "disable", rc);
+	}
+
+	return rc;
+}
+
 static int oplus_chg_vg_get_batt_temp(struct oplus_chg_ic_dev *ic_dev,
 				      int *temp)
 {
@@ -4735,6 +4764,10 @@ static void *oplus_chg_vg_get_func(struct oplus_chg_ic_dev *ic_dev,
 	case OPLUS_IC_FUNC_GAUGE_SYNC_PLUGIN:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_SYNC_PLUGIN,
 			oplus_chg_vg_mtk_sync_plugin);
+		break;
+	case OPLUS_IC_FUNC_GAUGE_SET_FAST_SAMPLING:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_SET_FAST_SAMPLING,
+			oplus_chg_vg_set_fast_sampling);
 		break;
 	case OPLUS_IC_FUNC_GAUGE_CHECK_IMP_MODEL:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_CHECK_IMP_MODEL,

@@ -3999,13 +3999,17 @@ static int bq2589x_charger_probe(struct i2c_client *client,
 			chr_err("%s get tcpc device type_c_port0 fail\n", __func__);
 		}
 	}
-	bq->pd_nb.notifier_call = pd_tcp_notifier_call;
-	ret = register_tcp_dev_notifier(bq->tcpc, &bq->pd_nb,
+	if (bq->tcpc) {
+		bq->pd_nb.notifier_call = pd_tcp_notifier_call;
+		ret = register_tcp_dev_notifier(bq->tcpc, &bq->pd_nb,
 				TCP_NOTIFY_TYPE_ALL);
-	if (ret < 0) {
-		pr_notice("register tcpc notifer fail\n");
-		ret = -EINVAL;
-		goto err_register_tcp_notifier;
+		if (ret < 0) {
+			pr_notice("register tcpc notifer fail\n");
+			ret = -EINVAL;
+			goto err_register_tcp_notifier;
+		}
+	} else {
+		pr_err("%s:tcpc is NULL, cannot register as port is not ready\n", __func__);
 	}
 
 	set_charger_ic(BQ2589X);

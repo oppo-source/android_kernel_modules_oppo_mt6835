@@ -1944,6 +1944,37 @@ static struct sc6607_platform_data *sc6607_parse_dt(struct device_node *np, stru
 	return pdata;
 }
 
+static bool is_wired_icl_votable_available(struct sc6607 *chip)
+{
+	if (!chip)
+		return false;
+
+	if (!chip->wired_icl_votable)
+		chip->wired_icl_votable = find_votable("WIRED_ICL");
+	return !!chip->wired_icl_votable;
+}
+
+static bool is_wired_fcc_votable_available(struct sc6607 *chip)
+{
+	if (!chip)
+		return false;
+
+	if (!chip->wired_fcc_votable)
+		chip->wired_fcc_votable = find_votable("WIRED_FCC");
+	return !!chip->wired_fcc_votable;
+}
+
+static void sc6607_rerun_votable_work(struct work_struct *work)
+{
+	struct sc6607 *chip =
+		container_of(work, struct sc6607, rerun_votable_work);
+
+	if (is_wired_fcc_votable_available(chip))
+		rerun_election(chip->wired_fcc_votable, false);
+	if (is_wired_icl_votable_available(chip))
+		rerun_election(chip->wired_icl_votable, true);
+}
+
 static bool sc6607_check_rerun_detect_chg_type(struct sc6607 *chip, u8 type)
 {
 	bool need_rerun_bc12 = false;
@@ -1964,7 +1995,14 @@ static bool sc6607_check_rerun_detect_chg_type(struct sc6607 *chip, u8 type)
 		chg_info("hw rerun bc12\n");
 		return true;
 	}
-	chip->bc12_done = true;
+
+	if (chip->bc12_done == false) {
+		chg_info("bc12_done\n");
+		chip->bc12_done = true;
+		sc6607_set_input_current_limit(chip, SC6607_DEFAULT_IBUS_MA);
+		schedule_work(&chip->rerun_votable_work);
+	}
+
 	return false;
 }
 
@@ -2329,6 +2367,7 @@ static int sc6607_hk_irq_handle(struct sc6607 *chip)
 				sc6607_disable_hvdcp(chip);
 				chip->bc12.first_noti_sdp = true;
 				chip->bc12_done = false;
+				oplus_sc6607_set_ichg(chip, SC6607_BUCK_ICHG_500MA);
 				chip->bc12_timeouts = 0;
 				chip->bc12_try_count = 0;
 				if (chip->soft_bc12)
@@ -3920,6 +3959,11 @@ static int sc6607_set_icl(struct oplus_chg_ic_dev *ic_dev, bool vooc_mode, bool 
 	}
 	chip = oplus_chg_ic_get_drvdata(ic_dev);
 
+	if (!chip->bc12_done && step) {
+		chg_info("bc12_done = %d, skip aicl\n", chip->bc12_done);
+		return rc;
+	}
+
 	if (step)
 		rc = oplus_sc6607_set_aicr(chip, icl_ma);
 	else
@@ -3941,6 +3985,12 @@ static int sc6607_set_fcc(struct oplus_chg_ic_dev *ic_dev, int fcc_ma)
 		return -ENODEV;
 	}
 	chip = oplus_chg_ic_get_drvdata(ic_dev);
+
+	if (!chip->bc12_done && fcc_ma > SC6607_BUCK_ICHG_500MA) {
+		chg_info("bc12_done = %d, fcc_ma = %d, force fcc_ma to %d\n",
+				chip->bc12_done, fcc_ma, SC6607_BUCK_ICHG_500MA);
+		fcc_ma = SC6607_BUCK_ICHG_500MA;
+	}
 
 	return oplus_sc6607_set_ichg(chip, fcc_ma);
 }
@@ -4007,7 +4057,7 @@ static int sc6607_get_input_vol(struct oplus_chg_ic_dev *ic_dev, int *vol_mv)
 	chip = oplus_chg_ic_get_drvdata(ic_dev);
 
 	sc6607_field_read(chip, F_ACDRV_EN, &value);
-	if (oplus_is_power_off_charging() && (value == 0)) {
+	if (oplus_is_power_off_charging() && (value == 0 || chip->power_good == 0)) {
 		*vol_mv = 0;
 	} else {
 		*vol_mv = oplus_sc6607_get_vbus(chip);
@@ -4822,7 +4872,13 @@ static void sc6607_flash_mode_checkout_work(struct work_struct *work)
 	struct sc6607 *chip = container_of(dwork, struct sc6607, flash_mode_checkout_work);
 
 	chg_info("\n");
-	oplus_chg_ic_virq_trigger(chip->ic_dev, OPLUS_IC_VIRQ_PLUGIN);
+	if (!chip || !chip->ic_dev) {
+		chg_info("chip or ic_dev null");
+		return;
+	}
+
+	if (oplus_sc6607_get_vbus(chip) < SC6607_VINDPM_THRES_MIN)
+		oplus_chg_ic_virq_trigger(chip->ic_dev, OPLUS_IC_VIRQ_PLUGIN);
 	return;
 }
 
@@ -5181,6 +5237,7 @@ static int sc6607_buck_probe(struct i2c_client *client, const struct i2c_device_
 	INIT_DELAYED_WORK(&chip->qc_vol_convert_work, sc6607_qc_vol_convert);
 	INIT_DELAYED_WORK(&chip->get_voocphy_info_work, sc6607_get_voocphy_info_work);
 	INIT_DELAYED_WORK(&chip->flash_mode_checkout_work, sc6607_flash_mode_checkout_work);
+	INIT_WORK(&chip->rerun_votable_work, sc6607_rerun_votable_work);
 
 #ifdef CONFIG_OPLUS_CHARGER_MTK
 	ret = sc6607_chg_init_psy(chip);
@@ -5264,6 +5321,7 @@ err_device_register:
 	charger_device_unregister(chip->chg_dev);
 #endif
 err_init:
+	cancel_work_sync(&chip->rerun_votable_work);
 	if (!gpio_is_valid(chip->irq_gpio))
 		gpio_free(chip->irq_gpio);
 err_parse_dt:
@@ -5344,6 +5402,7 @@ static int sc6607_buck_remove(struct i2c_client *client)
 	struct sc6607 *chip = i2c_get_clientdata(client);
 
 	if (chip) {
+		cancel_work_sync(&chip->rerun_votable_work);
 #ifdef CONFIG_OPLUS_CHARGER_MTK
 		if (chip->chg_dev)
 			charger_device_unregister(chip->chg_dev);

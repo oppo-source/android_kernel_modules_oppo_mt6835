@@ -1381,7 +1381,9 @@ static void glResetCallback(enum _ENUM_WMTDRV_TYPE_T eSrcType,
 				dumpWlanThreadsIfNeed();
 				triggerHifDumpIfNeed();
 				glResetUpdateFlag(TRUE);
+#if (CFG_SUPPORT_CONNINFRA == 1)
 				fgSimplifyResetFlow = TRUE;
+#endif
 #if CFG_MTK_ANDROID_WMT
 				wifi_reset_start();
 #endif

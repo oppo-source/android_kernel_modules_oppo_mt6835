@@ -2890,7 +2890,10 @@ uint32_t nicTxMsduQueue(struct ADAPTER *prAdapter,
 						prMsduInfo);
 		}
 #endif
-
+		if (prMsduInfo->prPacket == NULL) {
+			DBGLOG(TX, WARN, "prMsduInfo->prPacket=NULL");
+			continue;
+		}
 		HAL_WRITE_TX_DATA(prAdapter, prMsduInfo);
 	}
 
