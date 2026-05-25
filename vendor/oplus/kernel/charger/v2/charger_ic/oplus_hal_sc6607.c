@@ -3409,7 +3409,6 @@ static int oplus_sc6607_charging_disable(struct sc6607 *chip)
 		return -EINVAL;
 
 	chg_info("disable");
-	sc6607_disable_watchdog_timer(chip);
 	chip->hw_aicl_point = SC6607_HW_AICL_POINT_VOL_5V_PHASE1;
 	sc6607_set_input_volt_limit(chip, chip->hw_aicl_point);
 

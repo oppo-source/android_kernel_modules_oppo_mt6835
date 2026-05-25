@@ -1765,6 +1765,9 @@ static void oplus_wired_plugin_work(struct work_struct *work)
 		vote_override(chip->output_suspend_votable, OVERRIDE_VOTER, true, 0, false);
 		vote_override(chip->input_suspend_votable, OVERRIDE_VOTER, true, 0, false);
 		vote(chip->icl_votable, SPEC_VOTER, true, 500, true);
+		/* charger WDT disable */
+		if (chip->wired_topic)
+			oplus_wired_wdt_enable(chip->wired_topic, 0);
 		if (oplus_wired_is_usb_aicl_enhance())
 			rerun_election(chip->icl_votable, false);
 #ifdef CONFIG_OPLUS_CHARGER_MTK
