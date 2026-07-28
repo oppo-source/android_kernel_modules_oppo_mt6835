@@ -26,6 +26,7 @@
 #ifdef OPLUS_FEATURE_CHG_BASIC
 #include <oplus_chg_ic.h>
 #include <oplus_chg_pps.h>
+#include <oplus_reverse_chg.h>
 #endif
 
 #define CHARGING_INTERVAL 10
@@ -361,6 +362,7 @@ struct mtk_charger {
 	struct oplus_chg_ic_dev *ic_dev;
 	struct oplus_chg_ic_dev *gauge_ic_dev;
 	struct oplus_chg_ic_dev *pps_ic;
+	struct oplus_chg_ic_dev *reverse_chg_ic_dev;
 	bool wls_boost_soft_start;
 	int wls_set_boost_vol;
 	struct oplus_mms *gauge_topic;
@@ -371,6 +373,10 @@ struct mtk_charger {
 	int low_batt_otg_boost_curr_ua;
 	struct ntc_temp_parameters subboard_parameters;
 	struct temp_param *support_subboard_table;
+	enum oplus_dpdm_switch_mode dpdm_switch_mode;
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	struct oplus_ntc_switch ntc_switch_gpio;
+#endif /* CONFIG_HORAE_FLASH_LED_THERMAL */
 #endif
 
 	struct platform_device *pdev;
@@ -417,6 +423,7 @@ struct mtk_charger {
 	int pd_type;
 	bool pd_reset;
 	bool otg_enable;
+	bool oplus_pd_sdp_svid;
 	struct mutex ta_lock;
 
 	u32 bootmode;
@@ -432,6 +439,15 @@ struct mtk_charger {
 
 	struct mutex cable_out_lock;
 	int cable_out_cnt;
+
+	/* reverse charger	*/
+	bool reverse_enable;
+	bool high_reverse_enable;
+	uint32_t reverse_chg_svid;
+	bool source_plug_out;
+	int pre_source_vbus;
+	int power_role;
+	enum reverse_chg_msg_type msg_type;
 
 	/* system lock */
 	spinlock_t slock;
@@ -594,6 +610,9 @@ struct mtk_charger {
 	struct delayed_work charger_suspend_recovery_work;
 	struct delayed_work	publish_close_cp_item_work;
 	struct delayed_work svid_check_work;
+	struct delayed_work reverse_chg_svid_check_work;
+	struct delayed_work sink_request_check_work;
+	struct delayed_work source_pdo_check_work;
 	pd_msg_data pdo[PPS_PDO_MAX];
 	int cap_nr;
 	int sub_btb_valid_adc[OPLUS_SUB_BTB_MAX];

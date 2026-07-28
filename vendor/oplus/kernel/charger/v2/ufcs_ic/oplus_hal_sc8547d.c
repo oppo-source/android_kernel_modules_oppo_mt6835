@@ -2679,6 +2679,7 @@ static void sc8547d_cp_regdump_work(struct work_struct *work)
 	int i;
 	size_t index = 0;
 	u8 data;
+	int rc;
 
 	buf = kzalloc(ERR_MSG_BUF, GFP_KERNEL);
 	if (buf == NULL)
@@ -2686,7 +2687,11 @@ static void sc8547d_cp_regdump_work(struct work_struct *work)
 
 	for (i = 0; i < SC8547D_CP_STATUS_REG_MAX; i++) {
 		data = 0;
-		sc8547d_read_data(chip, g_sc8547d_cp_status_reg[i], &data, 1);
+		rc = sc8547d_read_data(chip, g_sc8547d_cp_status_reg[i], &data, 1);
+		if (rc < 0) {
+			chg_err("can't read 0x%02x buf, rc=%d\n", g_sc8547d_cp_status_reg[i], rc);
+			continue;
+		}
 		index += snprintf(buf + index, ERR_MSG_BUF, "0x%02x=%02x,",
 			g_sc8547d_cp_status_reg[i], data);
 	}

@@ -116,6 +116,7 @@ struct oplus_monitor {
 	struct oplus_mms *keep_topic;
 	struct mms_subscribe *reverse_subs;
 	struct oplus_mms *reverse_topic;
+	struct oplus_mms *dischg_boost_topic;
 
 	struct oplus_chg_track *track;
 
@@ -140,6 +141,7 @@ struct oplus_monitor {
 	struct delayed_work dischg_profile_update_work;
 	struct delayed_work dischg_profile_check_work;
 	struct delayed_work reverse_chg_info_check_work;
+	struct delayed_work reverse_led_info_check_work;
 	struct delayed_work reverse_delay_init_work;
 	struct delayed_work high_reverse_err_info_check_work;
 
@@ -319,6 +321,10 @@ struct oplus_monitor {
 	int source_pdo_curr;
 	int sink_req_volt;
 	int sink_req_curr;
+	int err_source_pdo_volt;
+	int err_source_pdo_curr;
+	int err_sink_req_volt;
+	int err_sink_req_curr;
 	int reverse_start_ui_soc;
 	int reverse_start_chip_soc;
 	int reverse_start_vbat;
@@ -346,9 +352,12 @@ struct oplus_monitor {
 	int reverse_end_batt_temp;
 	unsigned long led_on_start_time;
 	unsigned long led_on_end_time;
+	unsigned long on_start_time;
+	unsigned long on_end_time;
 	unsigned long reverse_on_time;
 	unsigned long reverse_end_time;
 	char reverse_str;
+	bool curr_derating_trig;
 };
 
 struct oplus_chg_into_l{

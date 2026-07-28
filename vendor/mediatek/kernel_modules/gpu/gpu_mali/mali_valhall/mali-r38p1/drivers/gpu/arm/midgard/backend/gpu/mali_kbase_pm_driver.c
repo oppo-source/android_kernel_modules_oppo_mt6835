@@ -29,6 +29,11 @@
 #include <tl/mali_kbase_tracepoints.h>
 #include <mali_kbase_pm.h>
 #include <mali_kbase_config_defaults.h>
+#if IS_ENABLED(CONFIG_MALI_MTK_KTHREAD_ENHANCE_FOR_JM)
+#include <linux/err.h>
+#include <linux/kthread.h>
+#include <linux/sched.h>
+#endif
 #include <mali_kbase_smc.h>
 
 #if MALI_USE_CSF
@@ -1568,12 +1573,20 @@ static int kbase_pm_l2_update_state(struct kbase_device *kbdev)
 
 	return 0;
 }
-
+#if IS_ENABLED(CONFIG_MALI_MTK_KTHREAD_ENHANCE_FOR_JM)
+static void shader_poweroff_timer_stop_worker(struct kthread_work *work)
+#else
 static void shader_poweroff_timer_stop_callback(struct work_struct *data)
+#endif
 {
 	unsigned long flags;
+	#if IS_ENABLED(CONFIG_MALI_MTK_KTHREAD_ENHANCE_FOR_JM)
+		struct kbasep_pm_tick_timer_state *stt = container_of(work,
+			struct kbasep_pm_tick_timer_state, work);
+	#else
 	struct kbasep_pm_tick_timer_state *stt = container_of(data,
 			struct kbasep_pm_tick_timer_state, work);
+	#endif
 	struct kbase_device *kbdev = container_of(stt, struct kbase_device,
 			pm.backend.shader_tick_timer);
 
@@ -1624,7 +1637,11 @@ static void shader_poweroff_timer_queue_cancel(struct kbase_device *kbdev)
 
 	if (hrtimer_active(&stt->timer) && !stt->cancel_queued) {
 		stt->cancel_queued = true;
+	    #if IS_ENABLED(CONFIG_MALI_MTK_KTHREAD_ENHANCE_FOR_JM)
+		kthread_queue_work(stt->worker, &stt->work);
+	    #else
 		queue_work(stt->wq, &stt->work);
+	    #endif
 	}
 }
 
@@ -2195,13 +2212,22 @@ shader_tick_timer_callback(struct hrtimer *timer)
 int kbase_pm_state_machine_init(struct kbase_device *kbdev)
 {
 	struct kbasep_pm_tick_timer_state *stt = &kbdev->pm.backend.shader_tick_timer;
-
+#if IS_ENABLED(CONFIG_MALI_MTK_KTHREAD_ENHANCE_FOR_JM)
+	stt->worker = kthread_create_worker(0, "kbase_pm_shader_poweroff");
+	if (IS_ERR_OR_NULL(stt->worker)) {
+		int err = stt->worker ? PTR_ERR(stt->worker) : -ENOMEM;
+		stt->worker = NULL;
+		return err;
+	}
+	sched_set_fifo(stt->worker->task);
+	kthread_init_work(&stt->work, shader_poweroff_timer_stop_worker);
+#else
 	stt->wq = alloc_workqueue("kbase_pm_shader_poweroff", WQ_HIGHPRI | WQ_UNBOUND, 1);
 	if (!stt->wq)
 		return -ENOMEM;
 
 	INIT_WORK(&stt->work, shader_poweroff_timer_stop_callback);
-
+#endif
 	stt->needed = false;
 	hrtimer_init(&stt->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	stt->timer.function = shader_tick_timer_callback;
@@ -2212,7 +2238,12 @@ int kbase_pm_state_machine_init(struct kbase_device *kbdev)
 #if MALI_USE_CSF
 	kbdev->pm.backend.core_idle_wq = alloc_workqueue("coreoff_wq", WQ_HIGHPRI | WQ_UNBOUND, 1);
 	if (!kbdev->pm.backend.core_idle_wq) {
+          #if IS_ENABLED(CONFIG_MALI_MTK_KTHREAD_ENHANCE_FOR_JM)
+                kthread_destroy_worker(stt->worker);
+                stt->worker = NULL;
+          #else
 		destroy_workqueue(stt->wq);
+          #endif
 		return -ENOMEM;
 	}
 
@@ -2227,8 +2258,17 @@ void kbase_pm_state_machine_term(struct kbase_device *kbdev)
 #if MALI_USE_CSF
 	destroy_workqueue(kbdev->pm.backend.core_idle_wq);
 #endif
+
 	hrtimer_cancel(&kbdev->pm.backend.shader_tick_timer.timer);
+#if IS_ENABLED(CONFIG_MALI_MTK_KTHREAD_ENHANCE_FOR_JM)
+	if (kbdev->pm.backend.shader_tick_timer.worker) {
+		kthread_flush_worker(kbdev->pm.backend.shader_tick_timer.worker);
+		kthread_destroy_worker(kbdev->pm.backend.shader_tick_timer.worker);
+		kbdev->pm.backend.shader_tick_timer.worker = NULL;
+	}
+#else
 	destroy_workqueue(kbdev->pm.backend.shader_tick_timer.wq);
+#endif
 }
 
 void kbase_pm_reset_start_locked(struct kbase_device *kbdev)

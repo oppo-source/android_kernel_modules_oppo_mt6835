@@ -319,6 +319,30 @@ static int oplus_boost_get_in_cv_mode(struct oplus_dischg_boost *chip, bool *cv_
 	return rc;
 }
 
+bool oplus_boost_get_cv_mode(struct oplus_mms *topic)
+{
+	struct oplus_dischg_boost *chip;
+	int rc;
+	bool cv_mode = false;
+
+	if (topic == NULL) {
+		chg_err("topic is NULL\n");
+		return false;
+	}
+	chip = oplus_mms_get_drvdata(topic);
+	if (!chip)
+		return false;
+
+	rc = oplus_boost_get_in_cv_mode(chip, &cv_mode);
+	if (rc < 0) {
+		chg_err("get cv mode, err\n");
+		return false;
+	} else {
+		chg_info("get cv mode is %d\n", cv_mode);
+		return cv_mode;
+	}
+}
+
 int oplus_boost_cv_mv_show(struct oplus_mms *topic)
 {
 	struct oplus_dischg_boost *chip;
@@ -554,7 +578,7 @@ static void oplus_boost_cv_dynamic_curr_work(struct work_struct *work)
 		}
 		curr_cv_64 = div64_s64(numerator, denominator);
 		curr_cv = (int)curr_cv_64;
-		curr_cv = rounddown(curr_cv, FCC_ACCURACY_MA);
+		curr_cv = rounddown(curr_cv + FCC_ACCURACY_MA / 2, FCC_ACCURACY_MA);
 		chg_info("cv mode current limit, curr_default= %d, vbat_mv= %d, "
 			    "eff_rate = %d, boost_ratio = %d, cv_now_mv= %d, curr_cv= %d\n",
 			    curr_default, vbat_mv, CV_CURRENT_SCALE_FACTOR,

@@ -397,11 +397,11 @@ static int oplus_ufcs_track_upload_err_info(struct oplus_ufcs_chip *chip, int er
 		ufcs_debug("%s: power_info kmalloc fail!\n", __func__);
 		return -ENOMEM;
 	}
-	oplus_chg_track_obtain_power_info(power_info, sizeof(power_info));
+	oplus_chg_track_obtain_power_info(power_info, OPLUS_CHG_TRACK_CURX_INFO_LEN);
 	index += snprintf(&(chip->ufcs_err_load_trigger->crux_info[index]), OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "%s",
 			  power_info);
 	memset(power_info, 0, OPLUS_CHG_TRACK_CURX_INFO_LEN);
-	oplus_chg_track_obtain_general_info(power_info, strlen(power_info), sizeof(power_info));
+	oplus_chg_track_obtain_general_info(power_info, strlen(power_info), OPLUS_CHG_TRACK_CURX_INFO_LEN);
 	index += snprintf(&(chip->ufcs_err_load_trigger->crux_info[index]), OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "%s",
 			  power_info);
 	schedule_delayed_work(&chip->ufcs_err_load_trigger_work, 0);
@@ -2321,7 +2321,7 @@ static int oplus_ufcs_set_fcl_curr(struct oplus_ufcs_chip *chip)
 	int vb_offset = 0, vbat_offset = 0;
 	int curr_dec = 0, min_curr = 0;
 	bool hw_status = false;
-	int vbat = chip->data.ap_batt_volt;
+	int vbat;
 	static bool  limit_status = false;
 	static int limit_cnts = 0;
 	struct oplus_chg_chip *chg_chip = oplus_chg_get_chg_struct();
@@ -2329,6 +2329,8 @@ static int oplus_ufcs_set_fcl_curr(struct oplus_ufcs_chip *chip)
 
 	if (!chip || !chg_chip || !chg_chip->full_limit_curr_support)
 		return -EINVAL;
+	vbat = chip->data.ap_batt_volt;
+
 	if (chip->ufcs_status <= OPLUS_UFCS_STATUS_OPEN_MOS) {
 		limit_status = false;
 		limit_cnts = 0;

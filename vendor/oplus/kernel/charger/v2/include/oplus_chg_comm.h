@@ -40,6 +40,11 @@ enum oplus_temp_region {
 #define V3P6_TEMP_REGION_MAX 8
 #define V3P7_TEMP_REGION_MAX 9
 
+enum power_role_type {
+	POWER_ROLE_UNKNOWN = -1,
+	POWER_ROLE_SINK = 0,
+	POWER_ROLE_SOURCE = 1,
+};
 
 enum oplus_ffc_temp_region {
 	FFC_TEMP_REGION_COOL,

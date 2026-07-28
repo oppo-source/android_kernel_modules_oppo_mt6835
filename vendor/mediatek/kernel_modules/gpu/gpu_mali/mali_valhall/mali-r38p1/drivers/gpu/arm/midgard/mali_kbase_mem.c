@@ -1491,6 +1491,10 @@ int kbase_mem_init(struct kbase_device *kbdev)
 			&mem_pool_defaults, NULL);
 	}
 
+#if IS_ENABLED(CONFIG_MALI_MTK_JIT_RECLAIM_ANTITHRASHING)
+	kbdev->jit_reclaim_timeout_ms = JIT_RECLAIM_DEFAULT_TIMEOUT_MS;
+#endif /* CONFIG_MALI_MTK_JIT_RECLAIM_ANTITHRASHING */
+
 	return err;
 }
 
@@ -1571,6 +1575,10 @@ struct kbase_va_region *kbase_alloc_free_region(struct rb_root *rbtree,
 
 	INIT_LIST_HEAD(&new_reg->jit_node);
 	INIT_LIST_HEAD(&new_reg->link);
+
+#if IS_ENABLED(CONFIG_MALI_MTK_JIT_RECLAIM_ANTITHRASHING)
+	new_reg->last_used_ts = 0;
+#endif /* CONFIG_MALI_MTK_JIT_RECLAIM_ANTITHRASHING */
 
 	return new_reg;
 }
@@ -4622,6 +4630,11 @@ struct kbase_va_region *kbase_jit_allocate(struct kbase_context *kctx,
 
 		mutex_lock(&kctx->jit_evict_lock);
 		list_move(&reg->jit_node, &kctx->jit_pool_head);
+
+#if IS_ENABLED(CONFIG_MALI_MTK_JIT_RECLAIM_ANTITHRASHING)
+		reg->last_used_ts = ktime_get_raw_ns();
+#endif /* CONFIG_MALI_MTK_JIT_RECLAIM_ANTITHRASHING */
+
 		mutex_unlock(&kctx->jit_evict_lock);
 
 		reg = NULL;

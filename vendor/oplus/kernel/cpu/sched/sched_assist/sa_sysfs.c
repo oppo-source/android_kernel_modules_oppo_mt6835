@@ -57,11 +57,11 @@ int global_sched_control_ux_select = 0;
 EXPORT_SYMBOL(global_sched_control_ux_select);
 int global_sched_disable_camera_ux = 0;
 EXPORT_SYMBOL(global_sched_disable_camera_ux);
-/*group sched default disable*/
-int global_sched_group_enabled = 0;
+/*group sched default enabled*/
+int global_sched_group_enabled = 3;
 EXPORT_SYMBOL(global_sched_group_enabled);
-/*DDL default disable*/
-int global_sched_ddl_enabled = 0;
+/*DDL default enabled*/
+int global_sched_ddl_enabled = 1;
 EXPORT_SYMBOL(global_sched_ddl_enabled);
 
 pid_t global_ux_task_pid = -1;

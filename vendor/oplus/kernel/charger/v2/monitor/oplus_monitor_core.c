@@ -234,6 +234,7 @@ static void oplus_monitor_update_charge_info(struct oplus_monitor *chip)
 	if (is_main_gauge_topic_available(chip)) {
 		oplus_mms_get_item_data(chip->main_gauge_topic, GAUGE_ITEM_VOL_MAX, &data, false);
 		chip->main_vbat = data.intval;
+		chip->vbat_mv = data.intval;
 		oplus_mms_get_item_data(chip->main_gauge_topic, GAUGE_ITEM_CURR, &data, false);
 		chip->main_ibat = data.intval;
 		oplus_mms_get_item_data(chip->main_gauge_topic, GAUGE_ITEM_TEMP, &data, false);
@@ -265,10 +266,7 @@ static bool oplus_monitor_all_topic_is_ready(struct oplus_monitor *chip)
 		chg_err("gauge topic not ready\n");
 		return false;
 	}
-	if (!chip->vooc_topic) {
-		chg_err("vooc topic not ready\n");
-		return false;
-	}
+
 	if (!chip->comm_topic) {
 		chg_err("common topic not ready\n");
 		return false;
@@ -624,7 +622,8 @@ static void oplus_monitor_subscribe_gauge_topic(struct oplus_mms *topic,
 }
 
 #define REVERSE_CHG_PDO_INFO_LEN 4
-static void get_reverse_chg_pdo_info(struct oplus_monitor *chip)
+static void get_reverse_chg_pdo_info(
+	struct oplus_monitor *chip, int *source_pdo_volt, int *source_pdo_curr, int *sink_req_volt, int *sink_req_curr)
 {
 	char* str;
 	int i = 0;
@@ -646,10 +645,10 @@ static void get_reverse_chg_pdo_info(struct oplus_monitor *chip)
 		}
 	}
 	if (i >= REVERSE_CHG_PDO_INFO_LEN) {
-		chip->source_pdo_volt = buf[0];
-		chip->source_pdo_curr = buf[1];
-		chip->sink_req_volt = buf[2];
-		chip->sink_req_curr = buf[3];
+		*source_pdo_volt = buf[0];
+		*source_pdo_curr = buf[1];
+		*sink_req_volt = buf[2];
+		*sink_req_curr = buf[3];
 	}
 }
 
@@ -672,7 +671,6 @@ static void oplus_reverse_chg_info_check_work(struct work_struct *work)
 	struct delayed_work *dwork = to_delayed_work(work);
 	struct oplus_monitor *chip =
 		container_of(dwork, struct oplus_monitor, reverse_chg_info_check_work);
-	static bool pre_led_on;
 
 	chip->reverse_max_shell_temp = chip->reverse_max_shell_temp > chip->shell_temp ?
 		chip->reverse_max_shell_temp : chip->shell_temp;
@@ -706,21 +704,20 @@ static void oplus_reverse_led_info_check_work(struct work_struct *work)
 
 	chip->on_start_time = chip->led_on_start_time < chip->reverse_on_time ?
 		chip->reverse_on_time : chip->led_on_start_time;
-	chip->led_on_end_time = chip->led_on_end_time < chip->reverse_on_time ?
+	chip->on_end_time = chip->led_on_end_time < chip->reverse_on_time ?
 		chip->reverse_on_time : chip->led_on_end_time;
-	if (chip->led_on_start_time > chip->led_on_end_time && pre_led_on != chip->led_on)
+	if (chip->on_start_time > chip->on_end_time && pre_led_on != chip->led_on)
 		chip->reverse_screen_off_time +=
-		jiffies_to_msecs(chip->led_on_start_time - chip->led_on_end_time) / 1000;
-	if (chip->led_on_end_time > chip->led_on_start_time && pre_led_on != chip->led_on)
+		jiffies_to_msecs(chip->on_start_time - chip->on_end_time) / 1000;
+	if (chip->on_end_time > chip->on_start_time && pre_led_on != chip->led_on)
 		chip->reverse_screen_on_time +=
-		jiffies_to_msecs(chip->led_on_end_time - chip->led_on_start_time) / 1000;
+		jiffies_to_msecs(chip->on_end_time - chip->on_start_time) / 1000;
 	if (chip->led_on && pre_led_on != chip->led_on)
 		chip->reverse_screen_on_count++;
 	pre_led_on = chip->led_on;
-	if (chip->reverse_state) {
-		schedule_delayed_work(&chip->reverse_chg_info_check_work, msecs_to_jiffies(5000));
-		return;
-	}
+	chg_info("on_start_time = %u, on_end_time = %u, led_on = %d\n",
+		jiffies_to_msecs(chip->on_start_time) / 1000, jiffies_to_msecs(chip->on_end_time) / 1000, chip->led_on);
+
 	return;
 }
 
@@ -767,20 +764,23 @@ static void oplus_monitor_reverse_chg_subs_callback(struct mms_subscribe *subs,
 			chip->reverse_state = !!data.intval;
 			if (chip->reverse_state) {
 				oplus_reverse_chg_info_init(chip);
+				schedule_delayed_work(&chip->reverse_led_info_check_work, 0);
 				schedule_delayed_work(&chip->reverse_chg_info_check_work, msecs_to_jiffies(5000));
 			} else {
+				cancel_delayed_work(&chip->reverse_led_info_check_work);
 				chip->reverse_end_time = jiffies;
 				if (chip->reverse_end_time > chip->reverse_on_time)
 					chip->reverse_total_time =
 					jiffies_to_msecs(chip->reverse_end_time - chip->reverse_on_time) / 1000;
-				if (chip->led_on && chip->led_on_end_time <= chip->led_on_start_time) {
+				if (chip->led_on && chip->on_end_time <= chip->on_start_time) {
 					chip->reverse_screen_on_time +=
-					jiffies_to_msecs(chip->reverse_end_time - chip->led_on_start_time) / 1000;
+					jiffies_to_msecs(chip->reverse_end_time - chip->on_start_time) / 1000;
 				}
-				if (!chip->led_on && chip->led_on_end_time >= chip->led_on_start_time) {
+				if (!chip->led_on && chip->on_end_time >= chip->on_start_time) {
 					chip->reverse_screen_off_time +=
-					jiffies_to_msecs(chip->reverse_end_time - chip->led_on_end_time) / 1000;
+					jiffies_to_msecs(chip->reverse_end_time - chip->on_end_time) / 1000;
 				}
+				chg_info("screen_off_time = %lu\n", chip->reverse_screen_off_time);
 				cancel_delayed_work(&chip->reverse_chg_info_check_work);
 			}
 			oplus_chg_track_upload_reverse_chg_info(chip);
@@ -788,7 +788,7 @@ static void oplus_monitor_reverse_chg_subs_callback(struct mms_subscribe *subs,
 		case REVERSE_ITEM_SINK_OPLUS_SVID:
 			oplus_mms_get_item_data(chip->reverse_topic, id, &data, false);
 			chip->sink_svid = data.intval;
-			chg_info("sink_svid = %d\n", chip->sink_svid);
+			chg_info("sink_svid = %u\n", chip->sink_svid);
 			break;
 		case REVERSE_ITEM_HIGH_REVERSE_ERR:
 			oplus_mms_get_item_data(chip->reverse_topic, id, &data, false);
@@ -1361,6 +1361,8 @@ static void oplus_monitor_wired_subs_callback(struct mms_subscribe *subs,
 			chip->notify_flag = 0;
 			if (!chip->wired_online)
 				oplus_chg_track_record_dual_chan_end(chip);
+			else
+				chip->curr_derating_trig = false;
 			oplus_chg_track_update_break_ui_online();
 			schedule_work(&chip->charge_info_update_work);
 			schedule_work(&chip->wired_plugin_work);
@@ -1740,6 +1742,8 @@ static void oplus_monitor_comm_subs_callback(struct mms_subscribe *subs,
 				chip->led_on_start_time = jiffies;
 			else
 				chip->led_on_end_time = jiffies;
+			if (chip->reverse_state)
+				schedule_delayed_work(&chip->reverse_led_info_check_work, 0);
 			if (chip->oplus_liquid_intake_led_status != chip->led_on &&
 			    chip->oplus_liquid_intake_check_led_status &&
 			    oplus_wired_get_hw_detect() != CC_DETECT_NOTPLUG) {
@@ -2396,6 +2400,12 @@ static struct mms_item oplus_monitor_item[] = {
 			.update = NULL,
 		}
 	},
+	{
+		.desc = {
+			.item_id = ERR_ITEM_CYCLE_CURRENT_DERATING,
+			.str_data = true,
+		}
+	},
 };
 
 static const struct oplus_mms_desc oplus_monitor_desc = {
@@ -2506,6 +2516,7 @@ static int oplus_monitor_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&chip->dischg_profile_update_work, oplus_chg_dischg_profile_update_work);
 	INIT_DELAYED_WORK(&chip->dischg_profile_check_work, oplus_chg_dischg_profile_check_work);
 	INIT_DELAYED_WORK(&chip->reverse_chg_info_check_work, oplus_reverse_chg_info_check_work);
+	INIT_DELAYED_WORK(&chip->reverse_led_info_check_work, oplus_reverse_led_info_check_work);
 	INIT_DELAYED_WORK(&chip->high_reverse_err_info_check_work, oplus_high_reverse_err_info_check_work);
 #if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
 	INIT_WORK(&chip->fgpa_reset_start_work, oplus_monitor_fgpa_reset_start_work);

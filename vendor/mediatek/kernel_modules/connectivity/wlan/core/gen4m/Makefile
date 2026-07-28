@@ -1101,7 +1101,7 @@ endif
 ifneq ($(TARGET_BUILD_VARIANT),user)
     ccflags-y += -DBUILD_QA_DBG=1
 else
-    ccflags-y += -DBUILD_QA_DBG=1
+    ccflags-y += -DBUILD_QA_DBG=0
 endif
 
 ifeq ($(CONFIG_MTK_COMBO_WIFI),y)

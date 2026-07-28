@@ -261,11 +261,13 @@
     0001=SGM41515A or SGM41515D
     1100=SGM41541
     1101=SGM41542
+    1110=SGM41512SA or SGM41512SD
 */
 #define SGM41515_PART_ID                               0x00
 #define SGM41515D_PART_ID                              BIT(3) >> SGM41515_DEVID_SHIFT
 #define SGM41541_PART_ID                               (BIT(6) | BIT(5)) >> SGM41515_DEVID_SHIFT
 #define SGM41542_PART_ID                               (BIT(6) | BIT(5) | BIT(3)) >> SGM41515_DEVID_SHIFT
+#define SGM41512SD_PART_ID                             (BIT(6) | BIT(5) | BIT(4)) >> SGM41515_DEVID_SHIFT
 
 /* Address:0Dh */
 #define REG0D_SGM41515_ADDRESS                         0x0d
@@ -292,6 +294,18 @@
 #define REG0F_SGM41515_VINDPM_THRESHOLD_OFFSET_5900MV  BIT(0)
 #define REG0F_SGM41515_VINDPM_THRESHOLD_OFFSET_7500MV  BIT(1)
 #define REG0F_SGM41515_VINDPM_THRESHOLD_OFFSET_10500MV (BIT(1) | BIT(0)))
+#define REG0F_SGM41515_VREG_FT_MASK                 (BIT(7) | BIT(6))
+#define REG0F_SGM41515_VREG_FT_SHIFT                6
+#define REG0F_SGM41515_VREG_FT_DISABLE              0x00  /* 00 = Disable */
+#define REG0F_SGM41515_VREG_FT_PLUS_8MV             0x01  /* 01 = VREG + 8mV */
+#define REG0F_SGM41515_VREG_FT_MINUS_8MV            0x02  /* 10 = VREG - 8mV */
+#define REG0F_SGM41515_VREG_FT_MINUS_16MV           0x03  /* 11 = VREG - 16mV */
+
+/* Address:10h */
+#define REG10_SGM41515_ADDRESS                         0x10
+
+/* Smart tuning thresholds */
+#define SMART_TUNING_MAX_ADJUSTMENT        12
 
 /* Other */
 #define SGM41515_FIRST_REG                             0x00

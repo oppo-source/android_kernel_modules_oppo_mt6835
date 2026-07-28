@@ -1012,11 +1012,12 @@ static int state_keep_update_fast_chg_type(struct oplus_mms *mms, union mms_msg_
 		return -ENOTSUPP;
 	fast_chg_type = sk->status_info[STATE_KEEP_STATUS_FAST_CHG_TYPE].get_status(
 		sk->status_info[STATE_KEEP_STATUS_FAST_CHG_TYPE].priv_data);
-	sk->status_info[STATE_KEEP_STATUS_FAST_CHG_TYPE].initialized = true;
 	chg_info("recording=%d, fast_chg_type=%d\n", sk->data.recording, fast_chg_type);
-	if (!state_keep_is_keep_status(sk) || fast_chg_type != CHARGER_SUBTYPE_DEFAULT)
+	if (!state_keep_is_keep_status(sk) || fast_chg_type != CHARGER_SUBTYPE_DEFAULT ||
+	    !sk->status_info[STATE_KEEP_STATUS_FAST_CHG_TYPE].initialized){
 		sk->data.fast_chg_type = fast_chg_type;
-
+		sk->status_info[STATE_KEEP_STATUS_FAST_CHG_TYPE].initialized = true;
+	}
 done:
 	data->intval = sk->data.fast_chg_type;
 	return 0;
@@ -1032,7 +1033,6 @@ static int state_keep_update_cpa_power(struct oplus_mms *mms, union mms_msg_data
 		chg_err("can't get state_keep struct info\n");
 		return -EINVAL;
 	}
-
 	if (state_keep_skip_recording(sk, STATE_KEEP_STATUS_CPA_POWER) &&
 	    sk->data.cpa_power != 0)
 		goto done;
@@ -1040,10 +1040,12 @@ static int state_keep_update_cpa_power(struct oplus_mms *mms, union mms_msg_data
 		return -ENOTSUPP;
 	cpa_power = sk->status_info[STATE_KEEP_STATUS_CPA_POWER].get_status(
 		sk->status_info[STATE_KEEP_STATUS_CPA_POWER].priv_data);
-	sk->status_info[STATE_KEEP_STATUS_CPA_POWER].initialized = true;
 	chg_info("recording=%d, cpa_power=%d\n", sk->data.recording, sk->data.cpa_power);
-	if (!state_keep_is_keep_status(sk) || cpa_power != 0)
+	if (!state_keep_is_keep_status(sk) || cpa_power != 0 ||
+	    !sk->status_info[STATE_KEEP_STATUS_CPA_POWER].initialized){
 		sk->data.cpa_power = cpa_power;
+		sk->status_info[STATE_KEEP_STATUS_CPA_POWER].initialized = true;
+	}
 
 done:
 	data->intval = sk->data.cpa_power;
@@ -1069,10 +1071,12 @@ static int state_keep_update_ui_power(struct oplus_mms *mms, union mms_msg_data 
 		return -ENOTSUPP;
 	ui_power = sk->status_info[STATE_KEEP_STATUS_UI_POWER].get_status(
 		sk->status_info[STATE_KEEP_STATUS_UI_POWER].priv_data);
-	sk->status_info[STATE_KEEP_STATUS_UI_POWER].initialized = true;
 	chg_debug("recording=%d, ui_power=%d\n", sk->data.recording, sk->data.ui_power);
-	if (!state_keep_is_keep_status(sk) || ui_power != 0)
+	if (!state_keep_is_keep_status(sk) || ui_power != 0 ||
+	    !sk->status_info[STATE_KEEP_STATUS_UI_POWER].initialized){
 		sk->data.ui_power = ui_power;
+		sk->status_info[STATE_KEEP_STATUS_UI_POWER].initialized = true;
+	}
 
 done:
 	data->intval = sk->data.ui_power;
@@ -1519,6 +1523,8 @@ static void state_keep_wired_subs_callback(struct mms_subscribe *subs,
 				} else if (!sk->data.wired_online) {
 					sk->data.recording = false;
 					sk->data.first_check = false;
+					if (sk->data.wls_online)
+						state_keep_status_info_reset(sk);
 					schedule_delayed_work(&sk->abnormal_check_work,
 						msecs_to_jiffies(ABNORMAL_CHECK_INTERVAL_MS));
 				}
@@ -1589,6 +1595,8 @@ static void state_keep_wls_subs_callback(struct mms_subscribe *subs,
 			oplus_mms_get_item_data(sk->wls_topic, id, &data, false);
 			sk->data.wls_online = !!data.intval;
 			chg_info("wireless online: %d\n", sk->data.wls_online);
+			// TODO: Support for wireless intermittent detection needs to be fixed.
+			state_keep_status_info_reset(sk);
 			break;
 		default:
 			break;

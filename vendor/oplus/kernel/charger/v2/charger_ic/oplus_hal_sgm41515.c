@@ -1911,6 +1911,69 @@ static int sgm41515_set_fcc(struct oplus_chg_ic_dev *ic_dev, int fcc_ma)
 	return sgm41515_charging_current_write_fast(chip, fcc_ma);
 }
 
+static int sgm41515_set_vreg_fine_tuning(struct sgm41515_chip *chip, int tuning_mv)
+{
+	int tuning_val = REG0F_SGM41515_VREG_FT_DISABLE;
+
+	if (!chip || atomic_read(&chip->charger_suspended) == 1)
+		return -ENODEV;
+
+	if (tuning_mv >= 4 && tuning_mv < 12) {
+		tuning_val = REG0F_SGM41515_VREG_FT_PLUS_8MV;
+	} else if (tuning_mv >= -12 && tuning_mv < -4) {
+		tuning_val = REG0F_SGM41515_VREG_FT_MINUS_8MV;
+	} else if (tuning_mv >= -20 && tuning_mv < -12) {
+		tuning_val = REG0F_SGM41515_VREG_FT_MINUS_16MV;
+	}
+
+	chg_info("fine_tuning = %dmV, tuning_val = 0x%02x\n", tuning_mv, tuning_val);
+	return sgm41515_write_byte_mask(chip, REG0F_SGM41515_ADDRESS,
+				       REG0F_SGM41515_VREG_FT_MASK,
+				       tuning_val << REG0F_SGM41515_VREG_FT_SHIFT);
+}
+
+static int sgm41515_smart_voltage_adjustment(struct sgm41515_chip *chip, int vfloat_mv)
+{
+	int rc = 0;
+	int coarse_tmp, coarse_voltage, fine_tuning_mv;
+
+	if (!chip || atomic_read(&chip->charger_suspended) == 1)
+		return -ENODEV;
+
+	if (vfloat_mv < 3856 || vfloat_mv > 4624) {
+		chg_err("Failed to set vfloat_mv, vfloat_mv %d below minimum (3856) or exceeds maximum (4624)\n", vfloat_mv);
+		return -EINVAL;
+	}
+
+	coarse_tmp = (vfloat_mv - REG04_SGM41515_CHG_VOL_LIMIT_OFFSET) / REG04_SGM41515_CHG_VOL_LIMIT_STEP;
+	coarse_voltage = REG04_SGM41515_CHG_VOL_LIMIT_OFFSET + coarse_tmp * REG04_SGM41515_CHG_VOL_LIMIT_STEP;
+	fine_tuning_mv = vfloat_mv - coarse_voltage;
+
+	if (fine_tuning_mv > SMART_TUNING_MAX_ADJUSTMENT) {
+		coarse_tmp += 1;
+		coarse_voltage = REG04_SGM41515_CHG_VOL_LIMIT_OFFSET + coarse_tmp * REG04_SGM41515_CHG_VOL_LIMIT_STEP;
+		fine_tuning_mv = vfloat_mv - coarse_voltage;
+	}
+
+	chg_info("vfloat=%dmV, coarse=%dmV, fine_tuning=%dmV\n", vfloat_mv, coarse_voltage, fine_tuning_mv);
+
+	rc = sgm41515_write_byte_mask(chip, REG04_SGM41515_ADDRESS,
+				      REG04_SGM41515_CHG_VOL_LIMIT_MASK,
+				      coarse_tmp << REG04_SGM41515_CHG_VOL_LIMIT_SHIFT);
+	if (rc < 0) {
+		chg_err("Failed to set coarse voltage: %d\n", rc);
+		return rc;
+	}
+
+	rc = sgm41515_set_vreg_fine_tuning(chip, fine_tuning_mv);
+	if (rc < 0) {
+		chg_err("Failed to set fine tuning: %d\n", rc);
+		return rc;
+	}
+
+	return rc;
+}
+
 static int sgm41515_float_voltage_write(struct sgm41515_chip *chip, int vfloat_mv)
 {
 	int rc = 0;
@@ -1919,18 +1982,22 @@ static int sgm41515_float_voltage_write(struct sgm41515_chip *chip, int vfloat_m
 	if (!chip)
 		return 0;
 
-	if(atomic_read(&chip->charger_suspended) == 1)
+	if (atomic_read(&chip->charger_suspended) == 1)
 		return 0;
 
 	chg_err("vfloat_mv = %d\n", vfloat_mv);
 
-	tmp = vfloat_mv - REG04_SGM41515_CHG_VOL_LIMIT_OFFSET;
+	if (chip->part_id == SGM41512SD_PART_ID) {
+		rc = sgm41515_smart_voltage_adjustment(chip, vfloat_mv);
+	} else {
+		tmp = vfloat_mv - REG04_SGM41515_CHG_VOL_LIMIT_OFFSET;
 
-	tmp = tmp / REG04_SGM41515_CHG_VOL_LIMIT_STEP;
+		tmp = tmp / REG04_SGM41515_CHG_VOL_LIMIT_STEP;
 
-	rc = sgm41515_write_byte_mask(chip, REG04_SGM41515_ADDRESS,
-			REG04_SGM41515_CHG_VOL_LIMIT_MASK,
-			tmp << REG04_SGM41515_CHG_VOL_LIMIT_SHIFT);
+		rc = sgm41515_write_byte_mask(chip, REG04_SGM41515_ADDRESS,
+				REG04_SGM41515_CHG_VOL_LIMIT_MASK,
+				tmp << REG04_SGM41515_CHG_VOL_LIMIT_SHIFT);
+	}
 
 	return rc;
 }
@@ -3122,7 +3189,7 @@ static bool sgm41515_get_deivce_online(struct sgm41515_chip *chip)
 	chg_err("sgm41515 part_id=0x%02X\n", chip->part_id);
 
 	if (chip->part_id == SGM41541_PART_ID || chip->part_id == SGM41515_PART_ID ||
-	    chip->part_id == SGM41515D_PART_ID)
+	    chip->part_id == SGM41515D_PART_ID || chip->part_id == SGM41512SD_PART_ID)
 		return true;
 
 	return false;

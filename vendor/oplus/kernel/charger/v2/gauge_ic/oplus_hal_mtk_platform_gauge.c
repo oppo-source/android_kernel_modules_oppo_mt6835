@@ -1092,37 +1092,78 @@ static int oplus_mtk_sync_plugin_state(struct oplus_chg_ic_dev *ic_dev)
 	return 0;
 }
 
-static int oplus_mtk_set_sili_ic_alg_term_volt(struct oplus_chg_ic_dev *ic_dev, int volt)
+static int oplus_get_term_vol_index(struct chip_mt6375_gauge *chip)
 {
-	if (g_gauge_chip == NULL || g_gauge_chip->gauge_ops == NULL) {
+	int temp = 0;
+	int index = TERM_VOL_COUNT - 1;
+	int i = 0;
+	temp = oplus_get_battery_temperature();
+
+	for (i = 0; i < TERM_VOL_COUNT - 1; i++) {
+		if (temp >= chip->term_vol_temp_range[i]) {
+			index = i;
+			break;
+		}
+	}
+
+	chg_info("temp = %d, index = %d\n", temp, index);
+	return index;
+}
+
+#define TERM_VOL_MULTIPLIER  10
+static int oplus_get_term_vol_delta(int volt, struct chip_mt6375_gauge *chip)
+{
+	int index = 0;
+	int term_vol_delta = 0;
+
+	index = oplus_get_term_vol_index(chip);
+	term_vol_delta = volt*TERM_VOL_MULTIPLIER - chip->term_vol_base[index];
+	chg_info("term_vol_delta = %d\n", term_vol_delta);
+
+	return term_vol_delta;
+}
+
+static int oplus_mtk_set_sili_ic_deep_term_volt(struct oplus_chg_ic_dev *ic_dev, int volt)
+{
+	struct chip_mt6375_gauge *chip;
+	int term_vol_delta = 0;
+	chip = oplus_chg_ic_get_drvdata(ic_dev);
+
+	if (g_gauge_chip == NULL || g_gauge_chip->gauge_ops == NULL || chip == NULL) {
 		chg_err("g_gauge_chip is null.\n");
 		return -EINVAL;
 	}
 
-	if (g_gauge_chip->gauge_ops->set_sili_ic_alg_term_volt == NULL)
+	if (g_gauge_chip->gauge_ops->set_sili_ic_deep_term_volt == NULL || g_mt6375_chip->term_vol_support == false)
 		return -EINVAL;
 
-	g_gauge_chip->gauge_ops->set_sili_ic_alg_term_volt(volt);
+	term_vol_delta = oplus_get_term_vol_delta(volt, chip);
+
+	g_gauge_chip->gauge_ops->set_sili_ic_deep_term_volt(term_vol_delta);
 	return 0;
 }
 
-static int oplus_mtk_get_sili_ic_alg_term_volt(struct oplus_chg_ic_dev *ic_dev, int *volt)
+static int oplus_mtk_get_sili_ic_deep_term_volt(struct oplus_chg_ic_dev *ic_dev, int *volt)
 {
 	if (g_gauge_chip == NULL || g_gauge_chip->gauge_ops == NULL) {
 		chg_err("g_gauge_chip is null.\n");
 		return -EINVAL;
 	}
 
-	if (g_gauge_chip->gauge_ops->get_sili_ic_alg_term_volt == NULL)
+	if (g_gauge_chip->gauge_ops->get_sili_ic_deep_term_volt == NULL)
 		return -EINVAL;
 
-	*volt = g_gauge_chip->gauge_ops->get_sili_ic_alg_term_volt();
+	*volt = g_gauge_chip->gauge_ops->get_sili_ic_deep_term_volt();
 	return 0;
 }
 
 static int oplus_mtk_set_vct(struct oplus_chg_ic_dev *ic_dev, int value)
 {
-	if (g_gauge_chip == NULL || g_gauge_chip->gauge_ops == NULL) {
+	int vbatt_full = 0;
+	struct chip_mt6375_gauge *chip;
+	chip = oplus_chg_ic_get_drvdata(ic_dev);
+
+	if (g_gauge_chip == NULL || g_gauge_chip->gauge_ops == NULL || chip == NULL) {
 		chg_err("g_gauge_chip is null.\n");
 		return -EINVAL;
 	}
@@ -1130,7 +1171,8 @@ static int oplus_mtk_set_vct(struct oplus_chg_ic_dev *ic_dev, int value)
 	if (g_gauge_chip->gauge_ops->set_fg_vct == NULL)
 		return -EINVAL;
 
-	g_gauge_chip->gauge_ops->set_fg_vct(value);
+	vbatt_full = chip->vbatt_full_cv - value * TERM_VOL_MULTIPLIER;
+	g_gauge_chip->gauge_ops->set_fg_vct(vbatt_full);
 
 	return 0;
 }
@@ -1311,13 +1353,13 @@ static void *oplus_chg_get_func(struct oplus_chg_ic_dev *ic_dev,
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_SYNC_PLUGIN,
 							oplus_mtk_sync_plugin_state);
 		break;
-	case OPLUS_IC_FUNC_GAUGE_GET_SILI_IC_ALG_TERM_VOLT:
-		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_GET_SILI_IC_ALG_TERM_VOLT,
-							oplus_mtk_get_sili_ic_alg_term_volt);
+	case OPLUS_IC_FUNC_GAUGE_GET_DEEP_TERM_VOLT:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_GET_DEEP_TERM_VOLT,
+							oplus_mtk_get_sili_ic_deep_term_volt);
 		break;
-	case OPLUS_IC_FUNC_GAUGE_SET_SILI_IC_ALG_TERM_VOLT:
-		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_SET_SILI_IC_ALG_TERM_VOLT,
-							oplus_mtk_set_sili_ic_alg_term_volt);
+	case OPLUS_IC_FUNC_GAUGE_SET_DEEP_TERM_VOLT:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_SET_DEEP_TERM_VOLT,
+							oplus_mtk_set_sili_ic_deep_term_volt);
 		break;
 	case OPLUS_IC_FUNC_GAUGE_SET_VCT:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GAUGE_SET_VCT, oplus_mtk_set_vct);
@@ -1348,7 +1390,7 @@ struct oplus_chg_ic_virq mt6375_guage_virq_table[] = {
 static void oplus_mt6375_guage_parse_dt(struct chip_mt6375_gauge *chip)
 {
 	int rc = 0;
-
+	int i = 0;
 	atomic_set(&chip->locked, 0);
 	atomic_set(&chip->suspended, 0);
 	rc = of_property_read_u32(chip->dev->of_node, "oplus,batt_num",
@@ -1369,6 +1411,36 @@ static void oplus_mt6375_guage_parse_dt(struct chip_mt6375_gauge *chip)
 	chip->mtk_gauge_cali_track_support =
 		of_property_read_bool(chip->dev->of_node, "oplus,mtk_gauge_cali_track_support");
 	chg_info("mtk_gauge_cali_track_support = %d\n", chip->mtk_gauge_cali_track_support);
+
+	rc = of_property_read_u32(chip->dev->of_node, "oplus,vbatt_full_cv", &chip->vbatt_full_cv);
+	if (rc < 0) {
+		chg_err("can't get oplus,vbatt_full_cv, rc = %d\n", rc);
+		chip->vbatt_full_cv = 44500;
+	}
+	chg_info("vbatt_full_cv = %d\n", chip->vbatt_full_cv);
+
+	rc = of_property_count_elems_of_size(chip->dev->of_node, "oplus,term_vol_temp_range", sizeof(u32));
+	chg_info("term_vol_temp_range count = %d\n", rc);
+	if (rc == TERM_VOL_COUNT - 1) {
+		rc = read_signed_data_from_node(chip->dev->of_node, "oplus,term_vol_temp_range",
+			(s32 *)(chip->term_vol_temp_range),
+			TERM_VOL_COUNT - 1);
+		for (i = 0; i < TERM_VOL_COUNT - 1; i++) {
+			chg_info("term_vol_temp_range[%d] = %d\n", i, chip->term_vol_temp_range[i]);
+		}
+	}
+
+	rc = of_property_count_elems_of_size(chip->dev->of_node, "oplus,term_vol_base", sizeof(u32));
+	if (rc ==  TERM_VOL_COUNT) {
+		rc = of_property_read_u32_array(chip->dev->of_node, "oplus,term_vol_base",
+			(u32 *)(chip->term_vol_base), rc);
+	}
+	if (rc < 0) {
+		chip->term_vol_support = false;
+	} else {
+		chip->term_vol_support = true;
+	}
+	chg_info("term_vol_support = %d\n", chip->term_vol_support);
 }
 
 static int oplus_gauge_sub_btb_parse_dt(struct chip_mt6375_gauge *chip)

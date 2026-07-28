@@ -2372,6 +2372,26 @@ int oplus_wired_clear_usb_status(struct oplus_mms_wired *chip, unsigned int stat
 	return 0;
 }
 
+int oplus_set_dpdm_ovp_disable(bool disable)
+{
+	int rc = 0;
+	struct oplus_mms_wired *chip = g_mms_wired;
+
+	if (!chip) {
+		chg_err("chip is NULL!\n");
+		return -ENODEV;
+	}
+	if (chip->buck_ic == NULL) {
+		chg_err("buck_ic is NULL");
+		return -ENODEV;
+	}
+
+	rc = oplus_chg_ic_func(chip->buck_ic, OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE, disable);
+	if (rc < 0)
+		chg_err("can't set OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE, rc=%d\n", rc);
+	return rc;
+}
+
 #define USB_20C 20
 #define USB_40C 40
 #define USB_30C 30
@@ -4532,11 +4552,14 @@ static void oplus_wired_reverse_subs_callback(struct mms_subscribe *subs,
 		case HIGH_REVERSE_ITEM_STATUS:
 			oplus_mms_get_item_data(chip->reverse_topic, id, &data, false);
 			chip->high_reverse_charging = !!data.intval;
-			if (chip->high_reverse_charging) {
+			if (!chip->high_reverse_charging)
+				chip->reverse_usbtemp_check = false;
+			break;
+		case REVERSE_ITEM_SINK_REQUEST_VOLT:
+			oplus_mms_get_item_data(chip->reverse_topic, id, &data, false);
+			if (data.intval >= 5000) {
 				chip->reverse_usbtemp_check = true;
 				schedule_work(&chip->reverse_usbtemp_check_work);
-			} else {
-				chip->reverse_usbtemp_check = false;
 			}
 			break;
 		default:

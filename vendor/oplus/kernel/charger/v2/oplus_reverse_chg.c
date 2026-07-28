@@ -102,7 +102,7 @@ struct oplus_chg_reverse {
 	struct delayed_work normal_reverse_set_hw_ocp_work;
 	struct delayed_work reverse_vbus_retention_check_work;
 	struct delayed_work reverse_chg_test_mode_work;
-	struct delayed_work reverse_clear_flag_keep_status_work;
+	struct delayed_work reverse_clear_keep_status_work;
 	struct delayed_work reverse_hard_reset_work;
 	struct work_struct reverse_online_work;
 	struct work_struct reverse_vbus_check_work;
@@ -130,7 +130,6 @@ struct oplus_chg_reverse {
 
 	int reverse_temp_cur_range;
 	int reverse_uisoc_cur_range;
-	int reverse_fastchg_batt_temp_status;
 	bool high_reverse_charging;
 	int reverse_max_curr;
 	bool start_check;
@@ -164,6 +163,7 @@ struct oplus_chg_reverse {
 	int batt_soc;
 	int batt_realy_temp;
 	int hard_reset_count;
+	int drop_down_count;
 	int reset_watchdog_time;
 	int pre_pdo_voltage;
 	int pre_pdo_current;
@@ -880,11 +880,11 @@ static void oplus_reverse_chg_type_work(struct work_struct *work)
 }
 
 #define HARD_RESET_COUNT_LEVEL 5
-static void oplus_reverse_clear_flag_keep_status_work(struct work_struct *work)
+static void oplus_reverse_clear_keep_status_work(struct work_struct *work)
 {
 	struct delayed_work *dwork = to_delayed_work(work);
 	struct oplus_chg_reverse *chip = container_of(dwork,
-		struct oplus_chg_reverse, reverse_clear_flag_keep_status_work);
+		struct oplus_chg_reverse, reverse_clear_keep_status_work);
 
 	if (!chip->reverse_enable) {
 		chip->req_volt = 0;
@@ -892,9 +892,17 @@ static void oplus_reverse_clear_flag_keep_status_work(struct work_struct *work)
 		chip->hard_reset_count = 0;
 		chip->pre_pdo_voltage = 0;
 		chip->pre_pdo_current = 0;
+		chip->high_reverse_count = 0;
+		chip->drop_down_count = 0;
 		vote(chip->reverse_pdo_votable, HW_ERR_VOTER, false, 0, false);
 		vote(chip->high_reverse_disable_votable, HW_ERR_VOTER, false, 0, false);
-		chg_info("clear chip->hard_reset_count, chip->pre_pdo\n");
+		vote(chip->high_reverse_disable_votable, USB_VOTER, false, 0, false);
+		vote(chip->reverse_pdo_votable, CURR_ERR_VOTER, false, 0, false);
+		vote(chip->reverse_pdo_votable, USB_VOTER, false, 0, false);
+		vote(chip->high_reverse_disable_votable, CURR_ERR_VOTER, false, 0, false);
+		vote(chip->reverse_pdo_votable, VOL_DIFF_VOTER, false, 0, false);
+		vote(chip->reverse_pdo_votable, VBUS_MV_VOTER, false, 0, false);
+		chg_info("clear keep status \n");
 	}
 }
 
@@ -978,24 +986,17 @@ static int oplus_reverse_temp_cur_range_init(struct oplus_chg_reverse *chip)
 
 	vbat_temp_cur = chip->shell_temp;
 	chip->ibus_ov = false;
-	if (vbat_temp_cur < chip->reverse_limit.reverse_temp_limit[TEMP_LEVLE_RANGE_COLD]) { /*0C*/
-		chip->reverse_temp_cur_range = REVERSE_TEMP_RANGE_COLD;
-		chip->reverse_fastchg_batt_temp_status = REVERSE_BAT_TEMP_COLD;
-	} else if (vbat_temp_cur < chip->reverse_limit.reverse_temp_limit[TEMP_LEVLE_RANGE_COOL]) { /*0-16C*/
-		chip->reverse_temp_cur_range = REVERSE_TEMP_RANGE_COOL;
-		chip->reverse_fastchg_batt_temp_status = REVERSE_BAT_TEMP_COOL;
-	} else if (vbat_temp_cur < chip->reverse_limit.reverse_temp_limit[TEMP_LEVLE_RANGE_NORMAL]) { /*16-45C*/
-		chip->reverse_temp_cur_range = REVERSE_TEMP_RANGE_NORMAL;
-		chip->reverse_fastchg_batt_temp_status = REVERSE_BAT_TEMP_NORMAL;
-	} else if (vbat_temp_cur < chip->reverse_limit.reverse_temp_limit[TEMP_LEVLE_RANGE_WARM]) { /*45-52C*/
-		chip->reverse_temp_cur_range = REVERSE_TEMP_RANGE_WARM;
-		chip->reverse_fastchg_batt_temp_status = REVERSE_BAT_TEMP_WARM;
-	} else {
-		chip->reverse_temp_cur_range = REVERSE_TEMP_RANGE_HIGH;
-		chip->reverse_fastchg_batt_temp_status = REVERSE_BAT_TEMP_HIGH;
-	}
-	chg_info("vbat_temp_cur =%d reverse_temp_cur_range =%d reverse_fastchg_batt_temp_status =%d \r\n",
-	vbat_temp_cur, chip->reverse_temp_cur_range, chip->reverse_fastchg_batt_temp_status);
+	if (vbat_temp_cur < chip->reverse_limit.reverse_temp_limit[TEMP_LEVLE_RANGE_COLD]) /*0C*/
+		chip->reverse_temp_cur_range = TEMP_LEVLE_RANGE_COLD;
+	else if (vbat_temp_cur < chip->reverse_limit.reverse_temp_limit[TEMP_LEVLE_RANGE_COOL]) /*0-16C*/
+		chip->reverse_temp_cur_range = TEMP_LEVLE_RANGE_COOL;
+	else if (vbat_temp_cur < chip->reverse_limit.reverse_temp_limit[TEMP_LEVLE_RANGE_NORMAL]) /*16-45C*/
+		chip->reverse_temp_cur_range = TEMP_LEVLE_RANGE_NORMAL;
+	else if (vbat_temp_cur < chip->reverse_limit.reverse_temp_limit[TEMP_LEVLE_RANGE_WARM]) /*45-52C*/
+		chip->reverse_temp_cur_range = TEMP_LEVLE_RANGE_WARM;
+	else
+		chip->reverse_temp_cur_range = TEMP_LEVLE_RANGE_HIGH;
+	chg_info("vbat_temp_cur =%d reverse_temp_cur_range =%d\r\n", vbat_temp_cur, chip->reverse_temp_cur_range);
 	return 0;
 }
 
@@ -1349,17 +1350,12 @@ static void oplus_reverse_chg_disbale_clear_flags(
 	vote(chip->high_reverse_disable_votable, BATT_TEMP_VOTER, false, 0, false);
 	vote(chip->high_reverse_disable_votable, BATT_SOC_VOTER, false, 0, false);
 	vote(chip->high_reverse_disable_votable, CURR_LIMIT_VOTER, false, 0, false);
-	vote(chip->high_reverse_disable_votable, CURR_ERR_VOTER, false, 0, false);
 	vote(chip->high_reverse_disable_votable, USER_VOTER, false, 0, false);
-	vote(chip->high_reverse_disable_votable, USB_VOTER, false, 0, false);
 	vote(chip->high_reverse_disable_votable, BATT_VOL_VOTER, false, 0, false);
 	vote(chip->reverse_pdo_votable, BATT_TEMP_VOTER, false, 0, false);
 	vote(chip->reverse_pdo_votable, BATT_SOC_VOTER, false, 0, false);
 	vote(chip->reverse_pdo_votable, CURR_LIMIT_VOTER, false, 0, false);
-	vote(chip->reverse_pdo_votable, CURR_ERR_VOTER, false, 0, false);
-	vote(chip->reverse_pdo_votable, VOL_DIFF_VOTER, false, 0, false);
 	vote(chip->reverse_pdo_votable, USER_VOTER, false, 0, false);
-	vote(chip->reverse_pdo_votable, USB_VOTER, false, 0, false);
 	vote(chip->reverse_pdo_votable, BATT_VOL_VOTER, false, 0, false);
 	vote(chip->cap_pdo0_votable, BATT_VOL_VOTER, false, 0, false);
 	vote(chip->cap_pdo0_votable, BATT_CURR_VOTER, false, 0, false);
@@ -1370,33 +1366,58 @@ static void oplus_reverse_chg_disbale_clear_flags(
 	chip->vbus_level = chip->vbus_limit_count;
 	chip->vbat_level = chip->vbat_limit_count;
 	chip->pre_target_cap_pdo0 = 0;
+	chip->kthread_reverse_enable = false;
+	chip->high_reverse_enable = false;
 }
 
 static void oplus_reverse_online_init(struct oplus_chg_reverse *chip)
 {
 	chip->last_high_reverse_pdo = 0;
-	chip->high_reverse_count = 0;
+}
+
+static void oplus_reverse_handle_level_for_drop_down(void)
+{
+	struct oplus_chg_reverse *chip = g_rvs_chg_chip;
+	static int pre_drop_down_count = 0;
+
+	if (chip->drop_down_count == pre_drop_down_count
+		|| chip->drop_down_count <= 0
+		|| chip->drop_down_count <= chip->hard_reset_count)
+		return;
+
+	pre_drop_down_count = chip->drop_down_count;
+
+	chg_info("drop_down_count=%d\n", chip->drop_down_count);
+	if (chip->drop_down_count <= HARD_RESET_COUNT_LEVEL) {
+		vote(chip->reverse_pdo_votable, HW_ERR_VOTER, true,
+			chip->reverse_vbus_pdo_limit[REVERSE_PDO_SIXTH_LEVEL -
+			chip->drop_down_count].reverse_pdo, false);
+	} else {
+		vote(chip->reverse_pdo_votable, HW_ERR_VOTER, true,
+			(NORMAL_VBUS << 16 | NORMAL_IBUS), false);/* 5V1A */
+		vote(chip->high_reverse_disable_votable, HW_ERR_VOTER, true, 1, false);
+	}
 }
 
 static void oplus_reverse_online_work(struct work_struct *work)
 {
 	struct oplus_chg_reverse *chip =
 		container_of(work, struct oplus_chg_reverse, reverse_online_work);
-	int rc;
 
 	if (chip->reverse_enable) {
 		oplus_reverse_online_init(chip);
-		schedule_delayed_work(&chip->reverse_monitor_work, 0);
+		schedule_delayed_work(&chip->reverse_monitor_work, msecs_to_jiffies(2000));
 	} else {
 		chg_info("reverse disbale clear flags,source plug out =%d \n",
 			oplus_check_reverse_chg_source_plug_out(chip));
 		oplus_reverse_chg_disbale_clear_flags(chip);
 		if (chip->reverse_ic && chip->use_cp_reverse)
 			oplus_reverse_set_source_pdo(chip, NORMAL_VBUS, LOWER_IBUS, NORMAL_VBUS, LOWER_IBUS);
-		if (chip->req_volt == PD_VBUS) {
-			schedule_delayed_work(&chip->reverse_vbus_retention_check_work, 0);
-		}
-		schedule_delayed_work(&chip->reverse_clear_flag_keep_status_work, msecs_to_jiffies(5000));
+		cancel_delayed_work(&chip->reverse_vbus_retention_check_work);
+		schedule_delayed_work(&chip->reverse_vbus_retention_check_work, 0);
+		chip->drop_down_count += 1;
+		cancel_delayed_work(&chip->reverse_clear_keep_status_work);
+		schedule_delayed_work(&chip->reverse_clear_keep_status_work, msecs_to_jiffies(5000));
 	}
 
 	if (!chip->use_high_reverse_awake) {
@@ -1424,12 +1445,11 @@ static int oplus_reverse_charge_start(struct oplus_chg_reverse *chip)
 	return -EINVAL;
 }
 
-#define HYST 1
+#define HYST 10
 static int oplus_reverse_update_batt_temp_curr(struct oplus_chg_reverse *chip)
 {
 	int ret;
 	int vbat_temp_cur;
-	int new_status = chip->reverse_fastchg_batt_temp_status;
 	int diff;
 	int upper_bound;
 	int lower_bound;
@@ -1476,6 +1496,21 @@ static int oplus_reverse_update_batt_temp_curr(struct oplus_chg_reverse *chip)
 		target_temp_range = TEMP_LEVLE_RANGE_HIGH;
 
 	current_temp_range = chip->reverse_temp_cur_range;
+
+	if (current_temp_range < TEMP_LEVLE_RANGE_COLD ||
+	    current_temp_range > TEMP_LEVLE_RANGE_HIGH) {
+		chg_err("reverse_temp_cur_range invalid(%d), reset to COLD\n",
+			current_temp_range);
+		current_temp_range = TEMP_LEVLE_RANGE_COLD;
+		chip->reverse_temp_cur_range = current_temp_range;
+	}
+	if (target_temp_range < TEMP_LEVLE_RANGE_COLD ||
+	    target_temp_range > TEMP_LEVLE_RANGE_HIGH) {
+		chg_err("target_temp_range invalid(%d), reset to COLD\n",
+			target_temp_range);
+		target_temp_range = TEMP_LEVLE_RANGE_COLD;
+	}
+
 	new_temp_range = current_temp_range;
 	diff = (int)target_temp_range - (int)current_temp_range;
 
@@ -1494,30 +1529,8 @@ static int oplus_reverse_update_batt_temp_curr(struct oplus_chg_reverse *chip)
 		new_temp_range = target_temp_range;
 	}
 
-	if (new_temp_range != current_temp_range) {
-		switch (new_temp_range) {
-		case TEMP_LEVLE_RANGE_COLD:
-			new_status = REVERSE_BAT_TEMP_COLD;
-			break;
-		case TEMP_LEVLE_RANGE_COOL:
-			new_status = REVERSE_BAT_TEMP_COOL;
-			break;
-		case TEMP_LEVLE_RANGE_NORMAL:
-			new_status = REVERSE_BAT_TEMP_NORMAL;
-			break;
-		case TEMP_LEVLE_RANGE_WARM:
-			new_status = REVERSE_BAT_TEMP_WARM;
-			break;
-		case TEMP_LEVLE_RANGE_HIGH:
-			new_status = REVERSE_BAT_TEMP_HIGH;
-			break;
-		default:
-			new_status = REVERSE_BAT_TEMP_NORMAL;
-			break;
-		}
+	if (new_temp_range != current_temp_range)
 		chip->reverse_temp_cur_range = new_temp_range;
-        chip->reverse_fastchg_batt_temp_status = new_status;
-	}
 
 	chg_info("vbat_temp_cur =%d reverse_temp_cur_range =%d \r\n", vbat_temp_cur, chip->reverse_temp_cur_range);
 
@@ -1592,12 +1605,20 @@ static void oplus_update_pdo_limit(struct oplus_chg_reverse *chip)
 		pdo_limit = chip->reverse_soc_pdo_limit[soc_idx].
 				reverse_temp_pdo_limit[temp_idx].comm_pdo_limit.reverse_pdo;
 	vote(chip->reverse_pdo_votable, BATT_SOC_VOTER, true, pdo_limit, false);
-	if ((pdo_limit & 0xFFFF0000) >> 16 == NORMAL_VBUS)
-		vote(chip->high_reverse_disable_votable, BATT_SOC_VOTER, true, 0, false);
-	else
+
+	if ((pdo_limit & 0xFFFF0000) >> 16 == NORMAL_VBUS) {
+		if (temp_idx <= TEMP_LEVLE_RANGE_COLD ||
+		    temp_idx >= TEMP_LEVLE_RANGE_WARM)
+			vote(chip->high_reverse_disable_votable, BATT_TEMP_VOTER, true, 1, false);
+		if (soc_idx == UISOC_LEVEL_MIN || soc_idx == UISOC_LEVEL_INVALID)
+			vote(chip->high_reverse_disable_votable, BATT_SOC_VOTER, true, 1, false);
+	} else {
+		vote(chip->high_reverse_disable_votable, BATT_TEMP_VOTER, false, 0, false);
 		vote(chip->high_reverse_disable_votable, BATT_SOC_VOTER, false, 0, false);
+	}
+
 	chg_info("Apply PDO: soc_idx = %d, temp_idx = %d, pdo_limit = %d\n",
-	         soc_idx, temp_idx, pdo_limit);
+		 soc_idx, temp_idx, pdo_limit);
 }
 
 static int oplus_reverse_charge_allow_check(struct oplus_chg_reverse *chip)
@@ -1641,8 +1662,8 @@ static int oplus_reverse_get_boost_curr(struct oplus_chg_reverse *chip, int *iou
 	if (chip->use_cp_reverse && chip->cp_ic) {
 		rc = oplus_chg_ic_func(chip->cp_ic, OPLUS_IC_FUNC_CP_GET_IOUT, iout);
 	} else {
-		*iout = chip->ibat_ma;
-		chg_info("reverse chg: iout = %d, chip->ibat_ma = %d\n", *iout, chip->ibat_ma);
+		*iout = oplus_gauge_get_batt_current();
+		chg_info("reverse chg: iout = %d\n", *iout);
 		rc = *iout < 0 ? -1 : 0;
 	}
 
@@ -1678,12 +1699,16 @@ static int  oplus_reverse_check_ibus_curr(struct oplus_chg_reverse *chip)
 	int cp_ibus_ma;
 	int cp_vbus_mv;
 	int over_curr_offset = 0;
+	int batt_num = oplus_gauge_get_batt_num();
 
 	if (!chip->reverse_enable) {
 		chip->ibus_over = 0;
 		chip->ibus_lower = 0;
 		return -EINVAL;
 	}
+
+	if (batt_num <= 0 || batt_num > 2)
+		batt_num = 1;
 
 	ret = oplus_reverse_get_boost_curr(chip, &cp_ibus_ma);
 	if (ret < 0)
@@ -1713,7 +1738,7 @@ static int  oplus_reverse_check_ibus_curr(struct oplus_chg_reverse *chip)
 		else
 			over_curr_offset = OCBAT_ADD_LEVEL;
 
-		if (cp_ibus_ma > over_curr_offset + chip->pre_pdo_current) {
+		if (cp_ibus_ma > over_curr_offset + (chip->pre_pdo_current * (2 / batt_num))) {
 			chip->ibus_over++;
 			if (chip->ibus_over > REVERSE_IBUS_OVER_COUNTS) {
 				chg_err("ibus over than %d, ", chip->pre_pdo_current);
@@ -1725,20 +1750,6 @@ static int  oplus_reverse_check_ibus_curr(struct oplus_chg_reverse *chip)
 		} else {
 			chip->ibus_over = 0;
 		}
-	}
-
-	if (chip->reverse_fastchg_batt_temp_status == REVERSE_BAT_TEMP_EXIT) {
-		chg_err("reverse battery temp out of range\n");
-		tbatt_over++;
-		if (tbatt_over >= REVERSE_TBATT_OV_CNT) {
-			chg_info("reverse exit \r\n");
-			vote(chip->reverse_pdo_votable, BATT_TEMP_VOTER,
-				true, chip->over_ibus_pdo_limit, false);
-			vote(chip->high_reverse_disable_votable, BATT_TEMP_VOTER, true, 1, false);
-		}
-	} else {
-		tbatt_over = 0;
-		vote(chip->high_reverse_disable_votable, BATT_TEMP_VOTER, false, 0, false);
 	}
 
 	return ret;
@@ -1791,7 +1802,7 @@ static void oplus_reverse_vbus_retention_check_work(struct work_struct *work)
 		if (chip->reverse_enable)
 			break;
 	}
-	if (chip->reverse_enable) {
+	if (chip->reverse_enable && chip->req_volt == PD_VBUS) {
 		vbus_down_count++;
 		vbus_retention_pdo_level = chip->reverse_vbus_pdo_limit_num - vbus_down_count;
 		chg_info("pre_pdo_current[%d], pre_pdo_current[%d], reverse_vbus_pdo_limit[%d]]\n",
@@ -2014,6 +2025,7 @@ static void oplus_reverse_monitor_work(struct work_struct *work)
 			return;
 	}
 
+	oplus_reverse_handle_level_for_drop_down();
 	oplus_reverse_protection_check(chip, &data);
 
 	if (!chip->reverse_enable) {
@@ -2054,12 +2066,9 @@ static void oplus_reverse_monitor_work(struct work_struct *work)
 
 	chg_info("oplus reverse monitor work\n");
 	schedule_delayed_work(&chip->reverse_monitor_work, msecs_to_jiffies(REVERSE_ENABLE_DELAY_MS));
+	return;
 exit:
-	if (chip->reverse_fastchg_batt_temp_status == REVERSE_BAT_TEMP_SWITCH_CURVE) {
-		chg_info("reverse need retry enter reverse\n");
-		chip->reverse_fastchg_batt_temp_status = REVERSE_TEMP_RANGE_INIT;
-		schedule_delayed_work(&chip->reverse_monitor_work, msecs_to_jiffies(range_switch_dealy));
-	}
+	schedule_delayed_work(&chip->reverse_monitor_work, msecs_to_jiffies(range_switch_dealy));
 	return;
 }
 static int oplus_high_reverse_charging_status(struct oplus_mms *mms,
@@ -2418,6 +2427,7 @@ static void oplus_reverse_sink_req_msg_handler(struct oplus_chg_ic_dev *ic_dev,
 					   void *virq_data)
 {
 	struct oplus_chg_reverse *chip = virq_data;
+	struct mms_msg *msg;
 	int msg_type = REVERSE_CHG_MSG_TYPE_UNKNOWN;
 	int req_voltage = 0;
 	int req_current = 0;
@@ -2438,6 +2448,21 @@ static void oplus_reverse_sink_req_msg_handler(struct oplus_chg_ic_dev *ic_dev,
 		if (rc >= 0) {
 			chip->req_volt = req_voltage;
 			chip->req_current = req_current;
+		}
+
+		if (req_voltage >= 5000 && req_current > 0) {
+			msg = oplus_mms_alloc_int_msg(MSG_TYPE_ITEM, MSG_PRIO_MEDIUM,
+						REVERSE_ITEM_SINK_REQUEST_VOLT, chip->req_volt);
+			if (msg == NULL) {
+				chg_err("alloc msg error\n");
+				return;
+			}
+			rc = oplus_mms_publish_msg(chip->reverse_topic, msg);
+			if (rc < 0) {
+				chg_err("publish high reverse charging msg error, rc=%d\n", rc);
+				kfree(msg);
+				return;
+			}
 		}
 		break;
 	default:
@@ -2493,6 +2518,12 @@ static struct mms_item oplus_reverse_item[] = {
 		.desc = {
 			.item_id = REVERSE_ITEM_LAST_HIGH_REVERSE_PDO,
 			.update = oplus_last_high_reverse_pdo,
+		}
+	},
+	{
+		.desc = {
+			.item_id = REVERSE_ITEM_SINK_REQUEST_VOLT,
+			.update = NULL,
 		}
 	}
 };
@@ -3066,13 +3097,13 @@ static int oplus_chg_reverse_probe(struct platform_device *pdev)
 	oplus_reverse_vbus_retention_check_work);
 	INIT_DELAYED_WORK(&chip->reverse_chg_test_mode_work,
 			  oplus_reverse_chg_test_mode_work);
-	INIT_DELAYED_WORK(&chip->reverse_clear_flag_keep_status_work,
-			  oplus_reverse_clear_flag_keep_status_work);
+	INIT_DELAYED_WORK(&chip->reverse_clear_keep_status_work,
+			  oplus_reverse_clear_keep_status_work);
 	INIT_DELAYED_WORK(&chip->reverse_hard_reset_work,
 			  oplus_reverse_hard_reset_work);
 	INIT_WORK(&chip->reverse_online_work, oplus_reverse_online_work);
 	INIT_WORK(&chip->reverse_vbus_check_work,
-	oplus_reverse_vbus_check_work);
+			  oplus_reverse_vbus_check_work);
 	mutex_init(&chip->set_pdo_lock);
 	oplus_reverse_vote_init(chip);
 	schedule_delayed_work(&chip->reverse_chg_init_work, 0);

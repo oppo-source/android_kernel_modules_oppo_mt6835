@@ -47,6 +47,8 @@
 #define UFCS_PR_CV_IBUS_CHECK_MIN_MA	1800
 #define UFCS_PR_CV_IBUS_CHECK_CNT	5
 #define UFCS_PR_CV_IBUS_CHECK_INC_MA	200
+#define UFCS_PR_BCC_DOWN_STEP_MA	1000
+#define UFCS_PR_BCC_DOWN_HOLD_MS	10000
 
 #define UFCS_PR_PDO_ERR_MAX_STEP_MA	1000
 #define UFCS_PR_PDO_ERR_MIN_CURR_MA	1000
@@ -206,6 +208,8 @@ static void ufcs_pr_init(struct oplus_ufcs *chip)
 
 	pr_data->curr_state = UFCS_PR_IDLE;
 	pr_data->prev_state = UFCS_PR_IDLE;
+
+	pr_data->bcc_target_update_jiffies = jiffies;
 
 	pr_data->target_current_ma = oplus_ufcs_get_start_curr_min(chip);
 	pr_data->req_vbus_max_mv = chip->config.target_vbus_mv;
@@ -662,6 +666,64 @@ static bool ufcs_pr_cv_basic_check(struct oplus_ufcs *chip, int *delay_ms)
 	return false;
 }
 
+static void ufcs_pr_update_bcc_target(struct oplus_ufcs *chip)
+{
+	struct ufcs_pr_data *pr_data = &chip->pr_data;
+	int ibat_from_ibus;
+	int ibat_ceiled;
+	int next_curve_ibat;
+	int new_target;
+	int min_limit;
+
+	if (pr_data->adapter_ibus_ma <= 0)
+		return;
+
+	ibat_from_ibus = pr_data->adapter_ibus_ma * pr_data->ibus_to_ibat_ratio;
+	ibat_ceiled = DIV_ROUND_UP(ibat_from_ibus, 100) * 100;
+
+	if (pr_data->bcc_target_ma <= 0 || pr_data->bcc_target_ma > pr_data->ibat_target_ma)
+		pr_data->bcc_target_ma = pr_data->ibat_target_ma;
+
+	if (pr_data->last_curve) {
+		next_curve_ibat = pr_data->iterm_ma;
+		min_limit = pr_data->iterm_ma;
+	} else {
+		next_curve_ibat = pr_data->next_ibus_target_ma * pr_data->ibus_to_ibat_ratio;
+		min_limit = next_curve_ibat + 100;
+		if (pr_data->bcc_target_ma - next_curve_ibat < UFCS_PR_BCC_DOWN_STEP_MA)
+			return;
+	}
+
+	if (ibat_ceiled <= pr_data->bcc_target_ma - UFCS_PR_BCC_DOWN_STEP_MA) {
+		if (time_before(jiffies, pr_data->bcc_target_update_jiffies +
+		    msecs_to_jiffies(UFCS_PR_BCC_DOWN_HOLD_MS)))
+			return;
+
+		new_target = max(pr_data->bcc_target_ma - UFCS_PR_BCC_DOWN_STEP_MA, min_limit);
+		pr_data->bcc_target_ma = min(pr_data->bcc_target_ma, new_target);
+		pr_data->bcc_target_update_jiffies = jiffies;
+	}
+}
+
+static void ufcs_pr_check_bcc_curr(struct oplus_ufcs *chip)
+{
+	struct ufcs_pr_data *pr_data = &chip->pr_data;
+	int bcc_min_curr, bcc_max_curr, bcc_exit_curr;
+	int bcc_target_ma = pr_data->bcc_target_ma > 0 ? pr_data->bcc_target_ma : pr_data->ibat_target_ma;
+	int bcc_min_raw;
+	int bcc_min_floor;
+
+	bcc_min_raw = bcc_target_ma / UFCS_BATT_CURR_TO_BCC_CURR;
+	bcc_exit_curr = pr_data->iterm_ma;
+	bcc_min_floor = ((max(bcc_min_raw - UFCS_BCC_CURRENT_MIN, 0)) / BCC_CURRENT_MIN_STEP) * BCC_CURRENT_MIN_STEP;
+	bcc_min_curr = max_t(int, bcc_exit_curr / UFCS_BATT_CURR_TO_BCC_CURR, bcc_min_floor);
+	bcc_max_curr = bcc_min_raw;
+
+	chip->bcc.bcc_min_curr = bcc_min_curr;
+	chip->bcc.bcc_max_curr = bcc_max_curr;
+	chip->bcc.bcc_exit_curr = bcc_exit_curr;
+}
+
 static void ufcs_pr_cv_handle_vbat_ge_target_last(struct oplus_ufcs *chip, int *delay_ms)
 {
 	struct ufcs_pr_data *pr_data = &chip->pr_data;
@@ -693,6 +755,7 @@ static void ufcs_pr_cv_handle_vbat_ge_target_last(struct oplus_ufcs *chip, int *
 			else
 				pr_data->req_vbus_max_mv = chip->vol_set_mv;
 			pr_data->adjust_rising_cnt = 0;
+			ufcs_pr_update_bcc_target(chip);
 		}
 	}
 }
@@ -715,6 +778,7 @@ static void ufcs_pr_cv_handle_vbat_ge_target_nonlast(struct oplus_ufcs *chip, in
 		} else {
 			ufcs_pr_set_pdo(chip, chip->vol_set_mv - UFCS_PR_VSTEP2, false);
 			pr_data->adjust_rising_cnt = 0;
+			ufcs_pr_update_bcc_target(chip);
 		}
 	}
 }
@@ -956,7 +1020,7 @@ int ufcs_pr_run(struct oplus_ufcs *chip)
 
 	chg_info("state:%s req_vbus:%d req_ibus:%d vbus:%d pmic_vbus:%d ibus:%d vbat:%d ibat:%d target_ibus:%d pmic_vbat:%d "
 		"vbus_max:%d req_max_vbus:%d vfull:%d vfull_comp:%d vbat_target:%d vbat_target_by_ibus:%d "
-		"curve_ibat:%d curve_ibus:%d next_curve_ibus:%d cv_curve:%d last_curve:%d iterm:%d "
+		"curve_ibat:%d curve_ibus:%d next_curve_ibus:%d bcc_target:%d cv_curve:%d last_curve:%d iterm:%d "
 		"adjust:%d adjust_cnt:%d adjust_time:%ums adjust_diff_time:%ums adjust_vbus:%d adajust_req:%d\n",
 		ufcs_pr_state_name(curr_state),
 		chip->vol_set_mv,
@@ -977,6 +1041,7 @@ int ufcs_pr_run(struct oplus_ufcs *chip)
 		pr_data->ibat_target_ma,
 		pr_data->ibus_target_ma,
 		pr_data->next_ibus_target_ma,
+		pr_data->bcc_target_ma,
 		pr_data->cv_curve,
 		pr_data->last_curve,
 		pr_data->iterm_ma,
@@ -1019,20 +1084,9 @@ static int pr_get_vbat_target_by_ibus(struct oplus_ufcs *chip)
 	return pr_data->curve.data[index - 1].target_vbat;
 }
 
-static int oplus_ufcs_pr_update_data(struct oplus_ufcs *chip)
+static void oplus_ufcs_pr_set_ratio(struct oplus_ufcs *chip, int batt_num)
 {
 	struct ufcs_pr_data *pr_data = &chip->pr_data;
-	struct ufcs_pr_config *pr_config = &chip->pr_config;
-	union mms_msg_data data = { 0 };
-	struct puc_strategy_ret_data puc_data;
-	int rc = 0;
-	int batt_num = oplus_gauge_get_batt_num();
-
-	rc = oplus_ufcs_get_src_info(chip, &chip->src_info);
-	if (rc < 0) {
-		chg_err("ufcs get src info error\n");
-		goto err;
-	}
 
 	switch (chip->cp_work_mode) {
 	case CP_WORK_MODE_4_TO_1:
@@ -1048,14 +1102,29 @@ static int oplus_ufcs_pr_update_data(struct oplus_ufcs *chip)
 		pr_data->vbus_to_vbat_ratio = 2 * batt_num;
 		break;
 	case CP_WORK_MODE_BYPASS:
-		pr_data->ibus_to_ibat_ratio = 1;
-		pr_data->vbus_to_vbat_ratio = 1 * batt_num;
-		break;
 	default:
 		pr_data->ibus_to_ibat_ratio = 1;
 		pr_data->vbus_to_vbat_ratio = 1 * batt_num;
 		break;
 	}
+}
+
+static int oplus_ufcs_pr_update_data(struct oplus_ufcs *chip)
+{
+	struct ufcs_pr_data *pr_data = &chip->pr_data;
+	struct ufcs_pr_config *pr_config = &chip->pr_config;
+	union mms_msg_data data = { 0 };
+	struct puc_strategy_ret_data puc_data;
+	int rc = 0;
+	int batt_num = oplus_gauge_get_batt_num();
+
+	rc = oplus_ufcs_get_src_info(chip, &chip->src_info);
+	if (rc < 0) {
+		chg_err("ufcs get src info error\n");
+		goto err;
+	}
+
+	oplus_ufcs_pr_set_ratio(chip, batt_num);
 
 	pr_data->adapter_vbus_mv = UFCS_SOURCE_INFO_VOL(chip->src_info);
 	pr_data->adapter_ibus_ma = UFCS_SOURCE_INFO_CURR(chip->src_info);
@@ -1078,6 +1147,8 @@ static int oplus_ufcs_pr_update_data(struct oplus_ufcs *chip)
 	pr_data->cv_curve = puc_data.support_cv;
 	pr_data->last_curve = puc_data.last_gear;
 	pr_data->vbat_target_mv = puc_data.target_vbat;
+	if (pr_data->ibat_target_ma != puc_data.target_ibus * pr_data->ibus_to_ibat_ratio || pr_data->bcc_target_ma <= 0)
+		pr_data->bcc_target_ma = puc_data.target_ibus * pr_data->ibus_to_ibat_ratio;
 	pr_data->ibat_target_ma = puc_data.target_ibus * pr_data->ibus_to_ibat_ratio;
 	pr_data->ibus_target_ma = puc_data.target_ibus;
 	pr_data->iterm_ma = puc_data.iterm;

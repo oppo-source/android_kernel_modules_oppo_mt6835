@@ -427,6 +427,8 @@ struct ufcs_pr_data {
 	int vbat_target_mv;
 	int vbat_target_mv_by_ibus;
 	int ibat_target_ma;
+	int bcc_target_ma;
+	unsigned long bcc_target_update_jiffies;
 	int ibus_target_ma;
 	int ibus_to_ibat_ratio;
 	int vbus_to_vbat_ratio;
@@ -529,6 +531,9 @@ struct oplus_ufcs {
 	struct oplus_chg_strategy *oplus_curve_strategy;
 	struct oplus_chg_strategy *third_curve_strategy;
 	struct oplus_chg_strategy *strategy;
+	struct oplus_chg_strategy *vfa_strategy;
+	struct oplus_chg_strategy *ccd_strategy;
+	struct mutex ccd_lock;
 
 	struct oplus_chg_strategy **oplus_lcf_strategy;
 	struct oplus_chg_strategy **third_lcf_strategy;
@@ -621,6 +626,7 @@ struct oplus_ufcs {
 
 	int ufcs_fastchg_batt_temp_status;
 	int ufcs_temp_cur_range;
+	int temp_region_cnt;
 	int ufcs_cool_full_temp_range;
 	int ufcs_low_curr_full_temp_status;
 	int batt_bal_curr_limit;
@@ -661,6 +667,7 @@ struct oplus_ufcs {
 };
 
 static void ufcs_pr_init(struct oplus_ufcs *chip);
+static void ufcs_pr_check_bcc_curr(struct oplus_ufcs *chip);
 
 struct current_level {
 	int level;
@@ -881,11 +888,43 @@ static int32_t oplus_ufcs_get_curve_vbus(struct oplus_ufcs *chip)
 	return data.target_vbus;
 }
 
+static int oplus_ufcs_apply_ccd(struct oplus_ufcs *chip, int target_ibus)
+{
+	int derated_ibus;
+
+	if (!chip || !chip->ccd_strategy)
+		return target_ibus;
+	mutex_lock(&chip->ccd_lock);
+	oplus_chg_strategy_set_process_data(chip->ccd_strategy, "curve_ibus", target_ibus);
+	if (oplus_chg_strategy_get_data(chip->ccd_strategy, &derated_ibus) >= 0)
+		target_ibus = derated_ibus;
+	mutex_unlock(&chip->ccd_lock);
+	return target_ibus;
+}
+
+static void oplus_ufcs_ccd_strategy_init(struct oplus_ufcs *chip)
+{
+	int rc;
+	u32 ccd_temp_region;
+
+	if (!chip || !chip->ccd_strategy)
+		return;
+	ccd_temp_region = chip->ufcs_temp_cur_range > 0 ? chip->ufcs_temp_cur_range - 1 : 0;
+	rc = oplus_chg_strategy_init(chip->ccd_strategy);
+	if (rc < 0) {
+		oplus_chg_strategy_release(chip->ccd_strategy);
+		chip->ccd_strategy = NULL;
+		return;
+	}
+	oplus_chg_strategy_set_process_data(chip->ccd_strategy, "temp_region", ccd_temp_region);
+}
+
 int oplus_ufcs_get_curve_ibus(struct oplus_mms *topic)
 {
 	struct oplus_ufcs *chip;
 	struct puc_strategy_ret_data data;
 	int rc;
+	int target_ibus;
 
 	if (topic == NULL)
 		return -EINVAL;
@@ -899,8 +938,10 @@ int oplus_ufcs_get_curve_ibus(struct oplus_mms *topic)
 		chg_err("can't get curve ibus, rc=%d\n", rc);
 		return rc;
 	}
-
-	return min(data.target_ibus, chip->adapter_max_curr);
+	target_ibus = data.target_ibus;
+	if (chip->ccd_strategy)
+		target_ibus = oplus_ufcs_apply_ccd(chip, data.target_ibus);
+	return min(target_ibus, chip->adapter_max_curr);
 }
 
 static int oplus_ufcs_switch_to_normal(struct oplus_ufcs *chip)
@@ -1941,6 +1982,20 @@ static int oplus_ufcs_cp_ss_timeout_enable(struct oplus_ufcs *chip, bool enable)
 }
 
 __maybe_unused
+static int oplus_ufcs_cp_set_pmid2vout_ovp_enable(struct oplus_ufcs *chip, bool enable)
+{
+	int rc = 0;
+
+	if (chip->cp_ic == NULL) {
+		chg_err("cp_ic is NULL\n");
+		return -ENODEV;
+	}
+	rc = oplus_chg_ic_func(chip->cp_ic, OPLUS_IC_FUNC_CP_SET_PMID2VOUT_OVP_ENABLE, enable);
+
+	return rc;
+}
+
+__maybe_unused
 static int oplus_ufcs_cp_get_work_status(struct oplus_ufcs *chip, bool *start)
 {
 	int rc;
@@ -2142,6 +2197,74 @@ static void oplus_ufcs_charge_btb_allow_check(struct oplus_ufcs *chip)
 		oplus_wired_set_shaft_btb_over(false);
 }
 
+static int oplus_ufcs_parse_vfa_strategy(struct oplus_ufcs *chip)
+{
+	struct device_node *vfa_node;
+
+	vfa_node = of_parse_phandle(oplus_get_node_by_type(chip->dev->of_node), "oplus,ufcs_vfa_strategy", 0);
+	if (!vfa_node) {
+		chg_info("ufcs_vfa_strategy not found, skip vfa strategy\n");
+		return 0;
+	}
+
+	chip->vfa_strategy = oplus_chg_strategy_alloc_by_node("vfa_strategy", vfa_node);
+	of_node_put(vfa_node);
+	if (IS_ERR_OR_NULL(chip->vfa_strategy)) {
+		chg_err("alloc ufcs vfa startegy error, rc=%ld", PTR_ERR(chip->vfa_strategy));
+		chip->vfa_strategy = NULL;
+		return -EFAULT;
+	}
+
+	return 0;
+}
+
+static int oplus_ufcs_parse_ccd_strategy(struct oplus_ufcs *chip)
+{
+	struct device_node *node = oplus_get_node_by_type(chip->dev->of_node);
+
+	chip->ccd_strategy = oplus_chg_strategy_alloc_by_node("cycle_current_derating", node);
+	if (IS_ERR_OR_NULL(chip->ccd_strategy))
+		chip->ccd_strategy = NULL;
+	if (chip->ccd_strategy)
+		oplus_chg_strategy_set_process_data(chip->ccd_strategy, "temp_region_cnt", chip->temp_region_cnt);
+	return 0;
+}
+
+static void oplus_ufcs_vfa_reset(struct oplus_ufcs *chip)
+{
+	if (chip->vfa_strategy)
+		oplus_chg_strategy_set_process_data(chip->vfa_strategy, "reset", 0);
+	vote(chip->ufcs_not_allow_votable, VFA_VOTER, false, 0, false);
+}
+
+static void oplus_ufcs_vfa_allow(struct oplus_ufcs *chip, bool do_init)
+{
+	int rc;
+	int allow_fastchg = 1;
+
+	if (!chip->vfa_strategy)
+		goto done;
+
+	if (do_init) {
+		rc = oplus_chg_strategy_init(chip->vfa_strategy);
+		if (rc < 0) {
+			chg_err("vfa_strategy init fail, rc=%d\n", rc);
+			allow_fastchg = 1;
+			goto done;
+		}
+	}
+
+	rc = oplus_chg_strategy_get_data(chip->vfa_strategy, &allow_fastchg);
+	if (rc < 0) {
+		chg_err("vfa_strategy get fail, rc=%d\n", rc);
+		allow_fastchg = 1;
+		goto done;
+	}
+
+done:
+	vote(chip->ufcs_not_allow_votable, VFA_VOTER, !allow_fastchg, 1, false);
+}
+
 static bool oplus_ufcs_charge_allow_check(struct oplus_ufcs *chip)
 {
 	union mms_msg_data data = { 0 };
@@ -2192,6 +2315,8 @@ static bool oplus_ufcs_charge_allow_check(struct oplus_ufcs *chip)
 	}
 
 	oplus_ufcs_charge_btb_allow_check(chip);
+
+	oplus_ufcs_vfa_allow(chip, true);
 
 	return !chip->ufcs_not_allow;
 }
@@ -3148,6 +3273,7 @@ static int oplus_ufcs_charge_start(struct oplus_ufcs *chip)
 						chg_err("strategy_init error, not support ufcs fast charge\n");
 						return rc;
 					}
+					oplus_ufcs_ccd_strategy_init(chip);
 					if (chip->oplus_ufcs_adapter) {
 						for (i = 0; i < chip->oplus_lcf_num && chip->oplus_lcf_strategy[i]; i++) {
 							rc = oplus_chg_strategy_init(chip->oplus_lcf_strategy[i]);
@@ -3170,6 +3296,7 @@ static int oplus_ufcs_charge_start(struct oplus_ufcs *chip)
 					chip->startup_retry_times = 0;
 					chip->start_check = false;
 					oplus_ufcs_set_charging(chip, true);
+					oplus_ufcs_vfa_reset(chip);
 					if (chip->oplus_ufcs_adapter && !chip->pr_config.support_pr)
 						chip->target_vbus_mv = chip->config.target_vbus_mv;
 					else
@@ -3938,7 +4065,7 @@ static void oplus_ufcs_check_sw_full(struct oplus_ufcs *chip, struct puc_strateg
 		vote(chip->ufcs_disable_votable, NO_DATA_VOTER, true, 1, false);
 		return;
 	}
-	rc = oplus_mms_get_item_data(chip->gauge_topic, GAUGE_ITEM_REAL_TEMP, &mms_data, true);
+	rc = oplus_mms_get_item_data(chip->comm_topic, COMM_ITEM_SHELL_TEMP, &mms_data, true);
 	if (rc < 0) {
 		chg_err("can't get battery temp, rc=%d\n", rc);
 		vote(chip->ufcs_disable_votable, NO_DATA_VOTER, true, 1, false);
@@ -3957,12 +4084,12 @@ static void oplus_ufcs_check_sw_full(struct oplus_ufcs *chip, struct puc_strateg
 		chip->count.cool_fw++;
 		if (chip->count.cool_fw >= UFCS_FULL_COUNTS_COOL) {
 			chip->count.cool_fw = 0;
+			chg_info("batt_temp:%d vbat_mv:%d cool sw full\n", batt_temp, vbat_mv);
 			if (chip->config.ufcs_full_recheck_temp != -EINVAL &&
 			    batt_temp <= config->ufcs_full_recheck_temp) {
 				chip->ufcs_cool_full_temp_range = chip->ufcs_temp_cur_range;
 				vote(chip->ufcs_not_allow_votable, CHG_FULL_COOL_VOTER, true, 1, false);
 			} else {
-				chg_info("batt_temp:%d vbat_mv:%d sw full\n", batt_temp, vbat_mv);
 				vote(chip->ufcs_disable_votable, CHG_FULL_VOTER, true, 1, false);
 			}
 			return;
@@ -3977,32 +4104,36 @@ static void oplus_ufcs_check_sw_full(struct oplus_ufcs *chip, struct puc_strateg
 			chip->count.sw_full++;
 			if (chip->count.sw_full >= UFCS_FULL_COUNTS_SW) {
 				chip->count.sw_full = 0;
+				chg_info("batt_temp:%d vbat_mv:%d normal sw full\n", batt_temp, vbat_mv);
 				if (chip->config.ufcs_full_recheck_temp != -EINVAL &&
 				    batt_temp <= config->ufcs_full_recheck_temp) {
 					chip->ufcs_cool_full_temp_range = chip->ufcs_temp_cur_range;
 					vote(chip->ufcs_not_allow_votable, CHG_FULL_COOL_VOTER, true, 1, false);
 				} else {
-					chg_info("batt_temp:%d vbat_mv:%d sw full\n", batt_temp, vbat_mv);
 					vote(chip->ufcs_disable_votable, CHG_FULL_VOTER, true, 1, false);
 				}
 				return;
 			}
+		} else {
+			chip->count.sw_full = 0;
 		}
 
 		if ((vbat_mv > normal_hw_vth)) {
 			chip->count.hw_full++;
 			if (chip->count.hw_full >= hw_full_cnt) {
 				chip->count.hw_full = 0;
+				chg_info("batt_temp:%d vbat_mv:%d normal hw full\n", batt_temp, vbat_mv);
 				if (chip->config.ufcs_full_recheck_temp != -EINVAL &&
 				    batt_temp <= config->ufcs_full_recheck_temp) {
 					chip->ufcs_cool_full_temp_range = chip->ufcs_temp_cur_range;
 					vote(chip->ufcs_not_allow_votable, CHG_FULL_COOL_VOTER, true, 1, false);
 				} else {
-					chg_info("batt_temp:%d vbat_mv:%d hw full\n", batt_temp, vbat_mv);
 					vote(chip->ufcs_disable_votable, CHG_FULL_VOTER, true, 1, false);
 				}
 				return;
 			}
+		} else {
+			chip->count.hw_full = 0;
 		}
 	} else {
 		chip->count.sw_full = 0;
@@ -4211,8 +4342,11 @@ static void oplus_ufcs_check_ibat_safety(struct oplus_ufcs *chip)
 	chip->timer.ibat_jiffies = jiffies;
 	ibus = UFCS_SOURCE_INFO_CURR(chip->src_info);
 
-	if (ibus > UFCS_UCP_SS_IBUS_MIN)
+	if (ibus > UFCS_UCP_SS_IBUS_MIN) {
 		oplus_ufcs_cp_ss_timeout_enable(chip, true);
+		oplus_ufcs_cp_set_pmid2vout_ovp_enable(chip, true);
+	}
+
 
 	if (!is_gauge_topic_available(chip)) {
 		chg_err("gauge topic not found\n");
@@ -4866,6 +5000,7 @@ static void oplus_ufcs_monitor_work(struct work_struct *work)
 	int rc;
 	int delay = UFCS_MONITOR_TIME_MS;
 	int range_switch_dealy = UFCS_TEMP_SWITCH_DELAY;
+	int target_ibus;
 	bool switch_to_ffc = false;
 
 	if (!chip->ufcs_charging) {
@@ -4906,7 +5041,10 @@ static void oplus_ufcs_monitor_work(struct work_struct *work)
 			goto exit;
 		}
 
-		oplus_ufcs_check_bcc_curr(chip, &data);
+		if (chip->pr_config.support_pr)
+			ufcs_pr_check_bcc_curr(chip);
+		else
+			oplus_ufcs_check_bcc_curr(chip, &data);
 		oplus_ufcs_set_cool_down_curr(chip, chip->cool_down);
 		oplus_ufcs_set_batt_bal_curr(chip);
 		oplus_ufcs_check_slow_chg_curr(chip, &data);
@@ -4921,7 +5059,12 @@ static void oplus_ufcs_monitor_work(struct work_struct *work)
 			switch_to_ffc = true;
 			goto exit;
 		}
-		vote(chip->ufcs_curr_votable, STEP_VOTER, true, data.target_ibus, false);
+		if (chip->ccd_strategy) {
+			target_ibus = oplus_ufcs_apply_ccd(chip, data.target_ibus);
+			vote(chip->ufcs_curr_votable, STEP_VOTER, true, target_ibus, false);
+		} else {
+			vote(chip->ufcs_curr_votable, STEP_VOTER, true, data.target_ibus, false);
+		}
 		oplus_ufcs_set_soc_current(chip);
 
 		if (chip->curr_set_ma == UFCS_PRELIMINARY_IMP_CHECK_CURR
@@ -5259,6 +5402,7 @@ static void oplus_ufcs_wired_online_work(struct work_struct *work)
 		oplus_ufcs_set_ufcs_vid(chip, 0);
 		vote(chip->ufcs_curr_votable, BAD_SUB_BTB_VOTER, false, 0, false);
 		vote(chip->ufcs_not_allow_votable, CHG_FULL_COOL_VOTER, false, 0, false);
+		oplus_ufcs_vfa_reset(chip);
 	} else {
 		chip->retention_state_ready = false;
 		if (READ_ONCE(chip->disconnect_change) && !chip->ufcs_online &&
@@ -5400,6 +5544,9 @@ static void oplus_ufcs_allow_recover_check(struct oplus_ufcs *chip)
 			vote(chip->ufcs_not_allow_votable, CHG_FULL_COOL_VOTER, false, 0, false);
 		}
 	}
+
+	if (is_client_vote_enabled(chip->ufcs_not_allow_votable, VFA_VOTER))
+		oplus_ufcs_vfa_allow(chip, false);
 }
 
 static void oplus_ufcs_gauge_update_work(struct work_struct *work)
@@ -5693,8 +5840,8 @@ static void oplus_ufcs_flash_mode_handle(struct oplus_ufcs *chip)
 	union mms_msg_data data = { 0 };
 	int rc;
 
-	if (!chip || !chip->comm_topic) {
-		chg_err("invalid chip or comm_topic\n");
+	if (!chip || !chip->comm_topic || !chip->cpa_topic || !chip->ufcs_not_allow_votable) {
+		chg_err("invalid chip or comm_topic or cpa_topic or ufcs_not_allow_votable\n");
 		return;
 	}
 
@@ -5711,6 +5858,13 @@ static void oplus_ufcs_flash_mode_handle(struct oplus_ufcs *chip)
 		}
 		vote(chip->ufcs_not_allow_votable, FLASH_MODE_VOTER, !!data.intval, data.intval, false);
 		chip->last_chg_flashmode = !!data.intval;
+		rc = oplus_mms_get_item_data(chip->cpa_topic, CPA_ITEM_ALLOW, &data, false);
+		if (rc < 0)
+			return;
+		if (chip->last_chg_flashmode && data.intval == CHG_PROTOCOL_UFCS && chip->ufcs_online) {
+			cancel_delayed_work(&chip->monitor_work);
+			schedule_work(&chip->soft_exit_work);
+		}
 	}
 }
 
@@ -5983,6 +6137,8 @@ static void oplus_ufcs_cpa_subs_callback(struct mms_subscribe *subs,
 		case CPA_ITEM_ALLOW:
 			oplus_mms_get_item_data(chip->cpa_topic, id, &data,
 						false);
+			if (chip->cpa_current_type == CHG_PROTOCOL_UFCS && data.intval != CHG_PROTOCOL_UFCS)
+				oplus_ufcs_vfa_reset(chip);
 			chip->cpa_current_type = data.intval;
 			/* Add work delay for BC1.2 check, for the Protocol-retention 1.0 may
 			   cause switching to the UFCS error when BC1.2 is not ready. */
@@ -8254,6 +8410,25 @@ exit:
 	return rc;
 }
 
+static void oplus_ufcs_get_temp_region_cnt(struct oplus_ufcs *chip, struct device_node *node)
+{
+	int rc;
+
+	if (chip == NULL || node == NULL) {
+		chg_err("chip or node is NULL\n");
+		if (chip)
+			chip->temp_region_cnt = 0;
+		return;
+	}
+	rc = of_property_count_elems_of_size(node, "oplus,temp_range", sizeof(u32));
+	if (rc <= 0) {
+		chg_err("get oplus,temp_range invalid, rc=%d\n", rc);
+		chip->temp_region_cnt = 0;
+		return;
+	}
+	chip->temp_region_cnt = rc - 1;
+}
+
 static int oplus_ufcs_probe(struct platform_device *pdev)
 {
 	struct oplus_ufcs *chip;
@@ -8268,6 +8443,7 @@ static int oplus_ufcs_probe(struct platform_device *pdev)
 	}
 	chip->dev = &pdev->dev;
 	platform_set_drvdata(pdev, chip);
+	mutex_init(&chip->ccd_lock);
 	chip->reset_adapter = false;
 	chip->handshake_ok = false;
 	init_completion(&chip->reset_abnormal_ack);
@@ -8346,6 +8522,7 @@ static int oplus_ufcs_probe(struct platform_device *pdev)
 	if (rc < 0)
 		goto third_startegy_err;
 
+	oplus_ufcs_get_temp_region_cnt(chip, startegy_node);
 	startegy_node = of_get_child_by_name(oplus_get_node_by_type(pdev->dev.of_node), "ufcs_charge_oplus_strategy");
 	if (startegy_node == NULL) {
 		chg_err("ufcs_charge_oplus_strategy not found\n");
@@ -8361,6 +8538,10 @@ static int oplus_ufcs_probe(struct platform_device *pdev)
 	}
 
 	oplus_ufcs_parse_lcf_strategy_dt(chip);
+
+	oplus_ufcs_parse_vfa_strategy(chip);
+
+	oplus_ufcs_parse_ccd_strategy(chip);
 
 	/* Encryption is not required when the maximum current is less than 3A */
 	if (chip->config.curr_max_ma <= UFCS_VERIFY_CURR_THR_MA) {
@@ -8395,6 +8576,10 @@ static int oplus_ufcs_probe(struct platform_device *pdev)
 	return 0;
 
 oplus_startegy_err:
+	if (chip->ccd_strategy != NULL) {
+		oplus_chg_strategy_release(chip->ccd_strategy);
+		chip->ccd_strategy = NULL;
+	}
 	if (chip->third_curve_strategy != NULL)
 		oplus_chg_strategy_release(chip->third_curve_strategy);
 third_startegy_err:
@@ -8419,6 +8604,7 @@ vote_init_err:
 imp_node_init_err:
 	if (chip->temperature_strategy)
 		oplus_chg_strategy_release(chip->temperature_strategy);
+	mutex_destroy(&chip->ccd_lock);
 	devm_kfree(&pdev->dev, chip);
 	return rc;
 }
@@ -8455,6 +8641,10 @@ static int oplus_ufcs_remove(struct platform_device *pdev)
 		oplus_mms_unsubscribe(chip->retention_subs);
 	if (!IS_ERR_OR_NULL(chip->plc_subs))
 		oplus_mms_unsubscribe(chip->plc_subs);
+	if (chip->vfa_strategy != NULL)
+		oplus_chg_strategy_release(chip->vfa_strategy);
+	if (chip->ccd_strategy != NULL)
+		oplus_chg_strategy_release(chip->ccd_strategy);
 	if (chip->oplus_curve_strategy != NULL)
 		oplus_chg_strategy_release(chip->oplus_curve_strategy);
 	if (chip->third_curve_strategy != NULL)
@@ -8486,6 +8676,7 @@ static int oplus_ufcs_remove(struct platform_device *pdev)
 		oplus_imp_node_unregister(chip->dev, chip->input_imp_node);
 	if (chip->temperature_strategy)
 		oplus_chg_strategy_release(chip->temperature_strategy);
+	mutex_destroy(&chip->ccd_lock);
 	devm_kfree(&pdev->dev, chip);
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))

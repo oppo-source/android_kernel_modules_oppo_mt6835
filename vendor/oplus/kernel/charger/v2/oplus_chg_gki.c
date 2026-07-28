@@ -763,8 +763,13 @@ static int battery_psy_get_prop(struct power_supply *psy,
 			rc = -ENOTSUPP;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
-		rc = oplus_mms_get_item_data(chip->gauge_topic,
-					     GAUGE_ITEM_VOL_MAX, &data, false);
+		if (is_support_parallel_battery(chip->gauge_topic) &&
+		    is_main_gauge_topic_available(chip))
+			rc = oplus_mms_get_item_data(chip->main_gauge_topic, GAUGE_ITEM_VOL_MAX,
+						     &data, false);
+		else
+			rc = oplus_mms_get_item_data(chip->gauge_topic,
+						     GAUGE_ITEM_VOL_MAX, &data, false);
 #ifdef CONFIG_OPLUS_CHARGER_MTK
 		pval->intval = data.intval;
 #else
@@ -772,8 +777,13 @@ static int battery_psy_get_prop(struct power_supply *psy,
 #endif
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
-		rc = oplus_mms_get_item_data(chip->gauge_topic,
-					     GAUGE_ITEM_VOL_MAX, &data, false);
+		if (is_support_parallel_battery(chip->gauge_topic) &&
+		    is_main_gauge_topic_available(chip))
+			rc = oplus_mms_get_item_data(chip->main_gauge_topic, GAUGE_ITEM_VOL_MAX,
+						     &data, false);
+		else
+			rc = oplus_mms_get_item_data(chip->gauge_topic,
+						     GAUGE_ITEM_VOL_MAX, &data, false);
 #ifdef CONFIG_OPLUS_CHARGER_MTK
 		pval->intval = data.intval;
 #else

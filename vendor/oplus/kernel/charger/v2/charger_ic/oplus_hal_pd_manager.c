@@ -171,6 +171,10 @@ static void tcpc_set_current_max(struct pd_manager_chip *chip, int max)
 	}
 	chg_info("current_max_ma = %d\n", max);
 	chip->current_max_ma = max;
+	if (oplus_chg_get_common_charge_icl_support_flags()) {
+		if (max == 0)
+			return;
+	}
 	oplus_chg_ic_virq_trigger(chip->ic_dev, OPLUS_IC_VIRQ_CURRENT_CHANGED);
 }
 
@@ -255,7 +259,7 @@ static int oplus_discover_id(struct tcpc_device *tcpc_dev)
 	int ret = 0;
 
 	ret = tcpm_dpm_vdm_discover_id(tcpc_dev, NULL);
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)) && !IS_ENABLED(CONFIG_OPLUS_PD_EXT_SUPPORT)
 	if (ret == TCP_DPM_RET_NOT_SUPPORT ||
 	    ret == TCP_DPM_RET_DENIED_WRONG_ROLE ||
 	    ret == TCPM_ERROR_PUT_EVENT) {

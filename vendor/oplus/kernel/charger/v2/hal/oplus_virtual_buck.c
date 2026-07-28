@@ -5024,6 +5024,37 @@ int oplus_chg_vb_set_adsp_ovp(struct oplus_chg_ic_dev *ic_dev, bool enable)
 	return rc;
 }
 
+static int oplus_set_usb_dpdm_ovp_disable(struct oplus_chg_ic_dev *ic_dev, bool disable)
+{
+	struct oplus_virtual_buck_ic *vb;
+	int i;
+	int rc = 0;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+
+	vb = oplus_chg_ic_get_drvdata(ic_dev);
+	if (!vb || !vb->child_list) {
+		chg_err("vb or child_list is NULL");
+		return -ENODEV;
+	}
+
+	for (i = 0; i < vb->child_num; i++) {
+		if (!func_is_support(&vb->child_list[i], OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE)) {
+			rc = -ENOTSUPP;
+			continue;
+		}
+		rc = oplus_chg_ic_func(vb->child_list[i].ic_dev, OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE, disable);
+		if (rc < 0)
+			chg_err("child ic[%d] OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE error, rc=%d\n", i, rc);
+		else
+			return 0;
+	}
+	return rc;
+}
+
 static void *oplus_chg_vb_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplus_chg_ic_func func_id)
 {
 	void *func = NULL;
@@ -5339,6 +5370,9 @@ static void *oplus_chg_vb_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplus_c
 		break;
 	case OPLUS_IC_FUNC_BUCK_SET_OVP_FORCED:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_SET_OVP_FORCED, oplus_chg_vb_set_adsp_ovp);
+		break;
+	case OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE, oplus_set_usb_dpdm_ovp_disable);
 		break;
 	default:
 		chg_err("this func(=%d) is not supported\n", func_id);

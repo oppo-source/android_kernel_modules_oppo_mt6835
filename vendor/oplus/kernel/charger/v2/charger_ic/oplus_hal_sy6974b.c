@@ -101,10 +101,11 @@
 #define REAL_SUSPEND_CHECK_INTERVAL		200
 #define HIGH_VBUS_THRESHOLD			6900
 #define DEF_VBUS_ONLINE_TH			3700
-#define LOW_VBUS_CHG_CUR_WITCH_CC		1500
-#define FCC_VOTE_CHECK_DEF_VAL			20
+#define LOW_VBUS_CHG_CUR_WITCH_CC		1600
+#define FCC_VOTE_CHECK_DEF_VAL			15
 #define SY6974B_FCC_STEP1			1000
 #define SY6974B_FCC_STEP2			1500
+#define SY6974B_FCC_STEP3			2000
 
 static atomic_t i2c_err_count;
 
@@ -169,6 +170,7 @@ struct sy6974b_chip {
 	int	normal_init_delay_ms;
 	int	other_init_delay_ms;
 	int charger_current_pre;
+	int suspend_check_cnt;
 	struct wakeup_source *suspend_ws;
 	bool dpdm_enabled;
 	bool power_good;
@@ -181,7 +183,7 @@ struct sy6974b_chip {
 	struct votable *fcc_votable;
 	struct votable *suspend_votable;
 	struct votable *vooc_disable_votable;
-	struct delayed_work fcc_vote_work;
+	struct delayed_work ibus_control_work;
 	struct votable *icl_votable;
 	struct tcpc_device *tcpc;
 	struct notifier_block pd_nb;
@@ -476,7 +478,7 @@ static void sy6974b_plugin_event_work(struct sy6974b_chip *chip)
 		pr_err("Meta mode force usb type\n");
 	}
 
-	if (get_boot_mode() != META_BOOT && false == oplus_is_rf_ftm_mode())
+	if (false == oplus_is_rf_ftm_mode())
 		sy6974b_request_dpdm(chip, true);
 	sy6974b_set_wdt_timer(chip, REG05_SY6974B_WATCHDOG_TIMER_40S);
 	chip->bc12_done = false;
@@ -765,7 +767,7 @@ static int sy6974b_rerun_bc12(struct oplus_chg_ic_dev *ic_dev)
 	chip = oplus_chg_ic_get_drvdata(ic_dev);
 
 	chg_info("rerun bc1.2\n");
-	if (get_boot_mode() != META_BOOT && false == oplus_is_rf_ftm_mode())
+	if (false == oplus_is_rf_ftm_mode())
 		sy6974b_request_dpdm(chip, true);
 	/* no need to retry */
 	chip->bc12_retry = true;
@@ -846,19 +848,100 @@ int sy6974b_input_current_limit_without_aicl(struct sy6974b_chip *chip, int curr
 	return rc;
 }
 
-static void sy6974b_fcc_vote_work(struct work_struct *work)
+static void sy6974b_pd_ibus_control_enter(struct sy6974b_chip *chip)
+{
+	union mms_msg_data data = { 0 };
+	int rc = 0;
+	int max_curr = 0;
+
+	rc = oplus_mms_get_item_data(chip->wired_topic,
+		WIRED_ITEM_CHARGER_CURR_MAX, &data, false);
+	if (rc >= 0)
+		max_curr = data.intval;
+
+	if (max_curr > 0) {
+		if (!IS_ERR_OR_NULL(chip->fcc_votable))
+			vote(chip->fcc_votable, IC_VOTER, true,
+				min(max_curr, LOW_VBUS_CHG_CUR_WITCH_CC), false);
+
+		if (!IS_ERR_OR_NULL(chip->icl_votable))
+			vote(chip->icl_votable, IC_VOTER, true,
+				min(max_curr, LOW_VBUS_CHG_CUR_WITCH_CC), false);
+	} else {
+		if (!IS_ERR_OR_NULL(chip->fcc_votable))
+			vote(chip->fcc_votable, IC_VOTER, true,
+				LOW_VBUS_CHG_CUR_WITCH_CC, false);
+
+		if (!IS_ERR_OR_NULL(chip->icl_votable))
+			vote(chip->icl_votable, IC_VOTER, true,
+				LOW_VBUS_CHG_CUR_WITCH_CC, false);
+	}
+	return;
+}
+
+static void sy6974b_pd_ibus_control_exit(struct sy6974b_chip *chip)
+{
+	if (!IS_ERR_OR_NULL(chip->fcc_votable))
+		vote(chip->fcc_votable, IC_VOTER, false, 0, false);
+	if (!IS_ERR_OR_NULL(chip->icl_votable) &&
+		is_client_vote_enabled(chip->icl_votable, IC_VOTER)) {
+		vote(chip->icl_votable, IC_VOTER, false, 0, false);
+		rerun_election(chip->icl_votable, true);
+	}
+}
+
+static bool sy6974b_pd_ibus_control_check(struct sy6974b_chip *chip,
+	bool chg_online, int wire_type, int vbus)
+{
+	if ((wire_type == OPLUS_CHG_USB_TYPE_PD ||
+	     wire_type == OPLUS_CHG_USB_TYPE_PD_DRP ||
+	     wire_type == OPLUS_CHG_USB_TYPE_PD_PPS ||
+	     wire_type == OPLUS_CHG_USB_TYPE_PD_SDP) &&
+	    vbus < HIGH_VBUS_THRESHOLD &&
+	    chip->suspend_check_cnt > 0)
+		return true;
+	else
+		return false;
+}
+
+static void sy6974b_pd_ibus_control(struct sy6974b_chip *chip,
+	bool chg_online, int wire_type)
+{
+	int vbus = 0;
+
+	if (chip == NULL)
+		return;
+
+	if (chg_online == true && !sy6974b_check_really_suspend_charger(chip)) {
+		get_vbus_voltage(chip, &vbus);
+		chg_info("vbus:%d, wire_type:%d\n", vbus, wire_type);
+
+		if (sy6974b_pd_ibus_control_check(chip, chg_online, wire_type, vbus)) {
+			chip->suspend_check_cnt--;
+			sy6974b_pd_ibus_control_enter(chip);
+			if (vbus < HIGH_VBUS_THRESHOLD)
+				schedule_delayed_work(&chip->ibus_control_work,
+					msecs_to_jiffies(REAL_SUSPEND_CHECK_INTERVAL));
+
+		} else if (wire_type != OPLUS_CHG_USB_TYPE_UNKNOWN ||
+			chip->suspend_check_cnt <= 0) {
+			sy6974b_pd_ibus_control_exit(chip);
+		}
+	} else {
+		chip->suspend_check_cnt = FCC_VOTE_CHECK_DEF_VAL;
+		if (!IS_ERR_OR_NULL(chip->fcc_votable))
+			vote(chip->fcc_votable, IC_VOTER, true, DISCONNECT_FCC_MAX_CURR, false);
+	}
+}
+
+static void sy6974b_ibus_control_work(struct work_struct *work)
 {
 	struct delayed_work *dwork = to_delayed_work(work);
-	struct sy6974b_chip *chip = container_of(dwork, struct sy6974b_chip, fcc_vote_work);
+	struct sy6974b_chip *chip = container_of(dwork, struct sy6974b_chip, ibus_control_work);
 	union mms_msg_data data = { 0 };
-	int max_curr = 0;
 	bool chg_online = 0;
 	int wire_type = 0;
 	int rc = 0;
-	int vbus = 0;
-	int detech = 0;
-	static int check_cnt = FCC_VOTE_CHECK_DEF_VAL;
-	static bool step_current = true;
 
 	if (IS_ERR_OR_NULL(chip->fcc_votable))
 		chip->fcc_votable = find_votable("WIRED_FCC");
@@ -866,7 +949,8 @@ static void sy6974b_fcc_vote_work(struct work_struct *work)
 		chip->icl_votable = find_votable("WIRED_ICL");
 
 	if (chip->wired_topic) {
-		rc = oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_CHG_TYPE, &data, false);
+		rc = oplus_mms_get_item_data(chip->wired_topic,
+			WIRED_ITEM_REAL_CHG_TYPE, &data, false);
 		if (rc >= 0)
 			wire_type = data.intval;
 
@@ -874,53 +958,7 @@ static void sy6974b_fcc_vote_work(struct work_struct *work)
 		if (rc >= 0)
 			chg_online = !!data.intval;
 
-		if (chg_online == true) {
-			detech = tcpm_inquire_typec_attach_state(chip->tcpc);
-			get_vbus_voltage(chip, &vbus);
-			chg_info("detech:%d, vbus:%d, wire_type:%d\n", detech, vbus, wire_type);
-			if ((wire_type == OPLUS_CHG_USB_TYPE_PD_SDP || detech == TYPEC_ATTACHED_SNK) &&
-				vbus < HIGH_VBUS_THRESHOLD && check_cnt > 0) {
-				check_cnt--;
-				rc = oplus_mms_get_item_data(chip->wired_topic,
-					WIRED_ITEM_CHARGER_CURR_MAX, &data, false);
-				if (rc >= 0)
-					max_curr = data.intval;
-
-				if (max_curr > 0) {
-					if (!IS_ERR_OR_NULL(chip->fcc_votable))
-						vote(chip->fcc_votable, IC_VOTER, true,
-							min(max_curr, LOW_VBUS_CHG_CUR_WITCH_CC), false);
-				} else {
-					vote(chip->fcc_votable, IC_VOTER, true,
-						LOW_VBUS_CHG_CUR_WITCH_CC, false);
-				}
-
-				if (detech == TYPEC_ATTACHED_SNK && vbus < HIGH_VBUS_THRESHOLD)
-					schedule_delayed_work(&chip->fcc_vote_work,
-						msecs_to_jiffies(REAL_SUSPEND_CHECK_INTERVAL));
-
-			} else if (wire_type != OPLUS_CHG_USB_TYPE_UNKNOWN) {
-				if (!IS_ERR_OR_NULL(chip->fcc_votable))
-					vote(chip->fcc_votable, IC_VOTER, false, 0, false);
-			}
-
-			if (wire_type != OPLUS_CHG_USB_TYPE_UNKNOWN) {
-				if (!IS_ERR_OR_NULL(chip->icl_votable)) {
-					vote(chip->icl_votable, IC_VOTER, false, 0, false);
-					if (step_current) {
-						rerun_election(chip->icl_votable, step_current);
-						step_current = false;
-					}
-				}
-			}
-		} else {
-			check_cnt = FCC_VOTE_CHECK_DEF_VAL;
-			if (!IS_ERR_OR_NULL(chip->fcc_votable))
-				vote(chip->fcc_votable, IC_VOTER, true, DISCONNECT_FCC_MAX_CURR, false);
-			if (!IS_ERR_OR_NULL(chip->icl_votable))
-				vote(chip->icl_votable, IC_VOTER, true, DISCONNECT_ICL_MAX_CURR, false);
-			step_current = true;
-		}
+		sy6974b_pd_ibus_control(chip, chg_online, wire_type);
 	}
 }
 
@@ -963,7 +1001,8 @@ static void sy6974b_wired_subs_callback(struct mms_subscribe *subs,
 			break;
 		case WIRED_ITEM_CHG_TYPE:
 		case WIRED_ITEM_ONLINE:
-			schedule_delayed_work(&chip->fcc_vote_work, 0);
+		case WIRED_ITEM_REAL_CHG_TYPE:
+			schedule_delayed_work(&chip->ibus_control_work, 0);
 			schedule_delayed_work(&chip->vooc_suspend_work, 0);
 			break;
 		default:
@@ -1054,7 +1093,7 @@ static void sy6974b_subscribe_wired_topic(struct oplus_mms *topic,
 	oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_PRESENT, &data, true);
 	chip->vbus_present = !!data.intval;
 	if (chip->vbus_present && !chip->otg_enable) {
-		if (get_boot_mode() != META_BOOT && false == oplus_is_rf_ftm_mode())
+		if (false == oplus_is_rf_ftm_mode())
 			sy6974b_request_dpdm(chip, true);
 		sy6974b_bc12_boot_check(chip);
 	}
@@ -1112,11 +1151,11 @@ static void sy6974b_suspend_charger_extern(struct sy6974b_chip *chip, bool en)
 {
 	if (en) {
 		schedule_delayed_work(&chip->event_work, msecs_to_jiffies(500));
-		sy6974b_charging_current_write_fast(chip, DISCONNECT_FCC_MAX_CURR);
 	} else {
+		msleep(100);
 		sy6974b_input_current_limit_without_aicl(chip, chip->charger_current_pre);
-		schedule_delayed_work(&chip->fcc_rerun_work, 0);
 	}
+	schedule_delayed_work(&chip->ibus_control_work, 0);
 }
 
 static bool sy6974b_check_force_unsuspend_charger(struct sy6974b_chip *chip, bool en)
@@ -1137,27 +1176,30 @@ static void sy6974b_really_suspend_charger(struct sy6974b_chip *chip, bool en)
 	}
 
 	chg_info("sy6974b_really_suspend_charger en:%d\n", en);
+
+	if (en == sy6974b_check_really_suspend_charger(chip))
+		return;
 #ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 #ifdef CONFIG_OPLUS_CHARGER_MTK
-	if (get_boot_mode() != META_BOOT && false == oplus_is_rf_ftm_mode())
-		sy6974b_write_byte_mask(chip, REG00_SY6974B_ADDRESS,
-			REG00_SY6974B_SUSPEND_MODE_MASK, REG00_SY6974B_SUSPEND_MODE_DISABLE);
-	else
+	if (!oplus_is_rf_ftm_mode())
 		sy6974b_write_byte_mask(chip, REG00_SY6974B_ADDRESS,
 			REG00_SY6974B_SUSPEND_MODE_MASK,
 			en ? REG00_SY6974B_SUSPEND_MODE_ENABLE : REG00_SY6974B_SUSPEND_MODE_DISABLE);
+	else
+		sy6974b_write_byte_mask(chip, REG00_SY6974B_ADDRESS,
+			REG00_SY6974B_SUSPEND_MODE_MASK, REG00_SY6974B_SUSPEND_MODE_DISABLE);
 
 #else
-	if (get_boot_mode() != META_BOOT && false == oplus_is_rf_ftm_mode())
-		sy6974b_write_byte_mask(chip, REG00_SY6974B_ADDRESS,
-			REG00_SY6974B_SUSPEND_MODE_MASK, REG00_SY6974B_SUSPEND_MODE_DISABLE);
-	else
+	if (!oplus_is_rf_ftm_mode())
 		sy6974b_write_byte_mask(chip, REG00_SY6974B_ADDRESS,
 			REG00_SY6974B_SUSPEND_MODE_MASK,
 			en ? REG00_SY6974B_SUSPEND_MODE_ENABLE : REG00_SY6974B_SUSPEND_MODE_DISABLE);
+	else
+		sy6974b_write_byte_mask(chip, REG00_SY6974B_ADDRESS,
+			REG00_SY6974B_SUSPEND_MODE_MASK, REG00_SY6974B_SUSPEND_MODE_DISABLE);
 #endif
 #endif
-
+	chip->suspend_check_cnt = FCC_VOTE_CHECK_DEF_VAL*2;
 	sy6974b_suspend_charger_extern(chip, en);
 	return;
 }
@@ -1311,6 +1353,11 @@ static int sy6974b_charging_current_write_fast_step(struct sy6974b_chip *chip, i
 
 	if (chg_cur > SY6974B_FCC_STEP2)
 		rc = sy6974b_charging_current_write_step(chip, SY6974B_FCC_STEP2);
+	else
+		return sy6974b_charging_current_write_step(chip, chg_cur);
+	msleep(1);
+	if (chg_cur > SY6974B_FCC_STEP3)
+		rc = sy6974b_charging_current_write_step(chip, SY6974B_FCC_STEP3);
 	else
 		return sy6974b_charging_current_write_step(chip, chg_cur);
 	msleep(1);
@@ -1519,10 +1566,15 @@ static int sy6974b_shipmode_enable(struct oplus_chg_ic_dev *ic_dev, bool en)
 
 static int sy6974b_get_otg_enbale(struct oplus_chg_ic_dev *ic_dev, bool *enable)
 {
-	struct sy6974b_chip *chip = oplus_chg_ic_get_drvdata(ic_dev);
+	struct sy6974b_chip *chip;
 	if (ic_dev == NULL) {
 		chg_err("oplus_chg_ic_dev is NULL");
 		return -ENODEV;
+	}
+
+	chip = oplus_chg_ic_get_drvdata(ic_dev);
+	if (chip == NULL) {
+		return -EINVAL;
 	}
 
 	*enable = chip->otg_enable;
@@ -2878,7 +2930,7 @@ static void sy6974b_driver_work_init(struct sy6974b_chip *chip)
 	INIT_DELAYED_WORK(&chip->bc12_retry_work, sy6974b_bc12_retry_work);
 	INIT_DELAYED_WORK(&chip->pre_event_work, sy6974b_pre_event_work);
 	INIT_DELAYED_WORK(&chip->vooc_suspend_work, vooc_charging_suspend_work);
-	INIT_DELAYED_WORK(&chip->fcc_vote_work, sy6974b_fcc_vote_work);
+	INIT_DELAYED_WORK(&chip->ibus_control_work, sy6974b_ibus_control_work);
 	INIT_DELAYED_WORK(&chip->fcc_rerun_work, sy6974b_fcc_rerun_work);
 }
 

@@ -6111,10 +6111,16 @@ __attribute__((unused)) static void oplus_chg_pps_get_source_cap(struct mtk_char
 {
 	struct tcpm_power_cap_val apdo_cap;
 	struct pd_source_cap_ext cap_ext;
+	struct oplus_chg_chip *chip = g_oplus_chip;
 	uint8_t cap_i = 0;
 	int ret = 0;
 	int idx = 0;
 	unsigned int i = 0;
+
+	if (!chip) {
+		pr_err("oplus_chip is null!\n");
+		return;
+	}
 
 	if (info->pd_type == MTK_PD_CONNECT_PE_READY_SNK_APDO) {
 		while (1) {
@@ -6127,14 +6133,15 @@ __attribute__((unused)) static void oplus_chg_pps_get_source_cap(struct mtk_char
 				chg_err("tcpm_inquire_pd_source_apdo failed(%d)\n", ret);
 				break;
 			}
-
-			ret = tcpm_dpm_pd_get_source_cap_ext(info->tcpc,
-				NULL, &cap_ext);
-			if (ret == TCPM_SUCCESS)
-				info->srccap.pdp = cap_ext.source_pdp;
-			else {
-				info->srccap.pdp = 0;
-				chg_err("tcpm_dpm_pd_get_source_cap_ext failed(%d)\n", ret);
+			if (get_charger_ic_det(chip) != (1 << SC6607)) {
+				ret = tcpm_dpm_pd_get_source_cap_ext(info->tcpc,
+					NULL, &cap_ext);
+				if (ret == TCPM_SUCCESS)
+					info->srccap.pdp = cap_ext.source_pdp;
+				else {
+					info->srccap.pdp = 0;
+					chg_err("tcpm_dpm_pd_get_source_cap_ext failed(%d)\n", ret);
+				}
 			}
 
 			info->srccap.pwr_limit[idx] = apdo_cap.pwr_limit;

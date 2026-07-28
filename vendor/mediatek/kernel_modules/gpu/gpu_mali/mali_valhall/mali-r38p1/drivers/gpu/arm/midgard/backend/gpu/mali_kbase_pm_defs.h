@@ -218,8 +218,13 @@ struct kbasep_pm_metrics_state {
  * @needed: Whether the timer should restart itself
  */
 struct kbasep_pm_tick_timer_state {
+	#if IS_ENABLED(CONFIG_MALI_MTK_KTHREAD_ENHANCE_FOR_JM)
+        struct kthread_worker *worker;
+        struct kthread_work work;
+	#else
 	struct workqueue_struct *wq;
 	struct work_struct work;
+	#endif
 	struct hrtimer timer;
 
 	ktime_t configured_interval;

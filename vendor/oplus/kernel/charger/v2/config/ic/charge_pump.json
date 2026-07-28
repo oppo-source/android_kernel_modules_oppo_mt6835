@@ -832,8 +832,40 @@
                     }
                 }
             }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_CP_SET_PMID2VOUT_OVP_ENABLE",
+            "desc": {
+                "zh": "设置开启PMID2VOUT的过压保护"
+            },
+            "auto_debug_code": true,
+            "parameter_list": ["bool"],
+            "parameter_desc": [
+                {
+                    "range": "0-1",
+                    "type": "in",
+                    "desc": {
+                        "zh": "1:打开, 0:关闭"
+                    }
+                }
+            ],
+            "vict": {
+                "read": false,
+                "write": {
+                    "cmd": "vict -f {id} -S{val} vic-*",
+                    "desc": {
+                        "zh": "设置开启PMID2VOUT的过压保护"
+                    }
+                },
+                "overwrite": {
+                    "cmd": "vict -f {id} -O {val} vic-*",
+                    "desc": {
+                        "zh": "使用val覆盖传入的开启状态"
+                    }
+                }
+            }
         }
     ],
 
-    "version": "V2.4:21:7b44fbb328c87fe9b7735dc69392d35940e7cc8ae44c4eb948b82c24bf138a7e"
+    "version": "V2.5:22:d63fb5ecff8f94d1af1101f35342522979899d4afc97eec7a75dce94f7aed103"
 }

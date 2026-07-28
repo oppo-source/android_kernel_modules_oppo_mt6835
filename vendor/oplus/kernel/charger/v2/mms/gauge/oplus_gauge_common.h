@@ -113,6 +113,7 @@ struct oplus_mms_gauge {
 
 	struct delayed_work sili_spare_power_effect_check_work;
 	struct delayed_work sili_term_volt_effect_check_work;
+	struct delayed_work set_deep_term_volt_work;
 	struct delayed_work subboard_ntc_err_work;
 	struct delayed_work deep_dischg_work;
 	struct delayed_work sub_deep_dischg_work;

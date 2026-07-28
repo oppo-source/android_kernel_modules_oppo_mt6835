@@ -44,7 +44,7 @@
 #define AP_OPCODE_UFCS_BUFFER     0x10005
 #define AP_OPCODE_READ_BUFFER     0x10006
 #define AP_OPCODE_WRITE_BUFFER    0x10008
-#define OPLUS_OPCODE_GET_SINK_RDO 0x10009
+#define OPLUS_OPCODE_GET_SINK_MSG 0x10009
 #define OEM_READ_WAIT_TIME_MS    500
 #define MAX_OEM_PROPERTY_DATA_SIZE 128
 #define AP_READ_WAIT_TIME_MS      1000
@@ -892,7 +892,10 @@ struct battery_chg_dev {
 	int batt_full_para[CHARGING_TYPE_MAX][QBG_TEMP_MAX];
 	int batt_full_temp[QBG_TEMP_MAX];
 	bool batt_full_method_new;
+	bool power_mos_status;
+	bool need_check_mos;
 	bool pd_check_completed;
+	int mos_retry_cnt;
 	atomic_t is_shaft_btb_over;
 	bool adsp_reboot_discnt_chg_support;
 };
