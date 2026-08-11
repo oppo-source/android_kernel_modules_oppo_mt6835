@@ -26,6 +26,7 @@
 #include <linux/interrupt.h>
 #include <linux/of_gpio.h>
 #include <linux/regulator/consumer.h>
+#include <linux/pinctrl/consumer.h>
 
 #include "hall_ist8801.h"
 #include "../oplus_tri_key.h"
@@ -1000,8 +1001,12 @@ struct dhall_operations  ist8801_down_ops = {
 	.set_sensitivity = ist8801_set_sensitivity,
 };
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int ist8801_i2c_probe(struct i2c_client *client)
+#else
 static int ist8801_i2c_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
+#endif
 {
 	struct ist8801_data_t *p_data = NULL;
 	struct extcon_dev_data *hall_dev = NULL;

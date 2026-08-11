@@ -307,6 +307,12 @@ static ssize_t pmicwd_config_proc_write(struct file *file, const char __user *bu
 		return count;
 	}
 
+	/*Yang.Wang@BSP.Kerenl.Stability, coverity-584775, solve count value overflow*/
+	if (count <= 0) {
+		PWD_ERR("%s: count value is wrong.\n", __func__);
+		return count;
+	}
+
 	buffer[count] = '\0';
 
 	/* validate the length of each of the 3 parts */

@@ -11,6 +11,9 @@ TCM_CORE=tcm/
 ccflags-y += -I$(srctree)/drivers/input/touchscreen/synaptics_hbp/
 ccflags-y += -I$(srctree)/drivers/input/touchscreen/synaptics_hbp/tcm/
 
+subdir-ccflags-$(CONFIG_TOUCHPANEL_MTK_PLATFORM) += -I$(srctree)/drivers/misc/mediatek/include/
+subdir-ccflags-$(CONFIG_OPLUS_MTK_DRM_GKI_NOTIFY) += -I$(srctree)/drivers/misc/mediatek/include/
+
 synaptics_tcm2-y := syna_tcm2.o
 
 synaptics_tcm2-y += \

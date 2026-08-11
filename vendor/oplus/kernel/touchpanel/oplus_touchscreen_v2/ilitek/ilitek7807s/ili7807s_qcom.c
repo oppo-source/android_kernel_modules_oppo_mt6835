@@ -303,7 +303,7 @@ static void ilitek_get_rawdata(void)
 	memset(rawdata_log, 0, sizeof(rawdata_log));
 
 	start = 2 * xch * ych + 2 * ych + 2 * xch + offset_len;
-	for (i = start; i < ilits->tp_data_len - 1; i++) {
+	for (i = start; i < ilits->tp_data_len - 1; i += 2) {
 		index = strlen(rawdata_log);
 		snprintf(rawdata_log + index, sizeof(rawdata_log) - index, "%2x, ", buf[i]);
 	}
@@ -476,6 +476,30 @@ static int ili_spi_wrapper(u8 *txbuf, u32 wlen, u8 *rxbuf, u32 rlen,
 			break;
 		}
 
+		if (!ice && spi_irq) {
+			/* Check INT triggered by FW when sending cmds. */
+			if (ilits->detect_int_stat(false) < 0) {
+				ILI_ERR("ERROR! Check INT timeout\n");
+				ret = -ETIME;
+				if (ilits->actual_tp_mode == P5_X_FW_TEST_MODE) {
+					break;
+				}
+			}
+		}
+
+		ret = ili_spi_mp_pre_cmd(wdata[3]);
+
+		if (ret < 0) {
+			ILI_ERR("spi-wrapper mp pre cmd error\n");
+		}
+
+		wdata[0] = SPI_READ;
+		ret = ilits->spi_write_then_read(ilits->spi, wdata, 1, rxbuf, rlen);
+
+		if (ret < 0) {
+			ILI_ERR("spi-wrapper read error\n");
+		}
+		break;
 	case SPI_READ:
 		if (!ice && spi_irq) {
 			/* Check INT triggered by FW when sending cmds. */
@@ -500,7 +524,8 @@ static int ili_spi_wrapper(u8 *txbuf, u32 wlen, u8 *rxbuf, u32 rlen,
 		if (ret < 0) {
 			ILI_ERR("spi-wrapper read error\n");
 		}
-
+		break;
+	default:
 		break;
 	}
 
@@ -650,14 +675,6 @@ int ili_proximity_far(int mode)
 			ILI_ERR("Switch to gesture mode failed during proximity far\n");
 		}
 
-		if (ilits->differ_mode) {
-			if (ili_set_tp_data_len(DATA_FORMAT_DEBUG, false, NULL) < 0) {
-				ILI_ERR("Failed to switch debug mode\n");
-			}
-			if (ilits->wrapper(open_differ_cmd, 2, NULL, 0, ON, OFF) < 0) {
-				ILI_ERR("switch ilitek diff mode fail\n");
-			}
-		}
 		break;
 
 	default:
@@ -1487,7 +1504,6 @@ void ili_report_ap_mode(u8 *buf, int len)
 		ilits->glove_mode = buf[ilits->tp_data_len - ILI_V2080_WATER_FLAG] & 0x01;
 		ilits->water_flag = (buf[ilits->tp_data_len - ILI_V2080_WATER_FLAG] & 0x02) >> 1;
 		ilits->thr = (s16)((buf[ilits->tp_data_len - ILI_V2080_THR_H8] << 8) | buf[ilits->tp_data_len - ILI_V2080_THR_L8]);
-		ILI_DBG("glove_mode = %d, water_flag = %d, thr = %d\n", ilits->glove_mode, ilits->water_flag, ilits->thr);
 	}
 
 	if (ilits->ts->health_monitor_support) {
@@ -1504,6 +1520,7 @@ void ili_report_ap_mode(u8 *buf, int len)
 		}
 		ilits->glove_mode_flag = ilits->glove_mode;
 	}
+	ILI_DBG("glove_mode = %d, water_flag = %d, thr = %d\n", ilits->glove_mode, ilits->water_flag, ilits->thr);
 
 	ilitek_tddi_touch_send_debug_data(buf, len);
 	if (ilits->chip->support_driver_ver > DRIVER_VER_2080 && ilits->position_high_resolution == ON) {
@@ -1661,8 +1678,10 @@ int ili_aod_control(bool ctrl)
 		}
 	} else {
 		ILI_INFO("Doing actual ap mode \n");
-		ili_sleep_handler(TP_RESUME);
-		ilits->aod_in = 0;
+		if (ilits->aod_in) {
+			ili_sleep_handler(TP_RESUME);
+			ilits->aod_in = 0;
+		}
 	}
 	ILI_INFO("AOD control end\n");
 	return ret;
@@ -2219,7 +2238,7 @@ int ili_sleep_handler(int mode)
 				ILI_ERR("Write sleep in cmd failed\n");
 			}
 		}
-		if (ilits->ts->aod_gesture_support) {
+		if (ilits->ts->incell_aod_gesture_support) {
 			ilits->aod_in = 0;
 			ILI_INFO("tp suspend aod_in set 0 \n");
 		}
@@ -2248,11 +2267,10 @@ int ili_sleep_handler(int mode)
 				ILI_ERR("Write deep sleep in cmd failed\n");
 			}
 		}
-		if (ilits->ts->aod_gesture_support) {
+		if (ilits->ts->incell_aod_gesture_support) {
 			ilits->aod_in = 0;
 			ILI_INFO("tp suspend aod_in set 0 \n");
 		}
-
 		ILI_INFO("TP deep suspend end\n");
 		break;
 
@@ -2272,11 +2290,10 @@ int ili_sleep_handler(int mode)
 				ILI_ERR("TP Reset failed during resume\n");
 			}
 		}
-		if (ilits->ts->aod_gesture_support) {
+		if (ilits->ts->incell_aod_gesture_support) {
 			ilits->aod_in = 0;
 			ILI_INFO("tp suspend aod_in set 0 \n");
 		}
-
 		ilits->tp_suspend = false;
 		ILI_INFO("TP resume end\n");
 #endif
@@ -2507,6 +2524,7 @@ void ili_aod_gesture_mode (u8 *buf, int len)
 }
 int ili_report_handler(void *chip_data)
 {
+	struct ilitek_ts_data *chip_info = (struct ilitek_ts_data *)chip_data;
 	int ret = 0, pid = 0;
 	u8  checksum = 0, pack_checksum = 0;
 	u8 *trdata = NULL;
@@ -2575,8 +2593,11 @@ int ili_report_handler(void *chip_data)
 	ILI_DBG("Packet ID = %x\n", pid);
 	if (ilits->actual_tp_mode == P5_X_FW_AP_MODE) {
 		if (pid == P5_X_DEMO_PALM_PACKET_ID) {
-			ILI_INFO("PALM PACKET ID Code = 0x%X", pid);
-			ret = P5_X_DEMO_PALM_PACKET_ID;
+			if (chip_info->ts->palm_to_sleep_enable) {
+				ILI_INFO("PALM PACKET ID Code = 0x%X", pid);
+				ret = P5_X_DEMO_PALM_PACKET_ID;
+				goto out;
+			}
 			goto out;
 		}
 	}
@@ -2797,8 +2818,9 @@ int ili_core_spi_setup(int num)
 	}
 
 	ILI_INFO("spi clock = %u\n", freq[num]);
-	ilits->spi->chip_select =
-		0; /*modify reg=0 for more tp vendor share same spi interface*/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
+	ilits->spi->chip_select = 0; /*modify reg=0 for more tp vendor share same spi interface*/
+#endif
 	ilits->spi->mode = SPI_MODE_0;
 	ilits->spi->bits_per_word = 8;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
@@ -2815,13 +2837,14 @@ int ili_core_spi_setup(int num)
 		ILI_ERR("Failed to setup spi device\n");
 		return -ENODEV;
 	}
-
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	ILI_INFO("name = %s, bus_num = %d,cs = %d, mode = %d, speed = %d\n",
 		 ilits->spi->modalias,
 		 ilits->spi->master->bus_num,
 		 ilits->spi->chip_select,
 		 ilits->spi->mode,
 		 ilits->spi->max_speed_hz);
+#endif
 	return 0;
 }
 
@@ -2976,12 +2999,12 @@ static int ilitek_reset(void *chip_data)
 	mutex_lock(&chip_info->touch_mutex);
 	ilits->tp_suspend = false;
 	chip_info->actual_tp_mode = P5_X_FW_AP_MODE;
-	ILI_INFO("\n");
 	ret = ili_fw_upgrade_handler();
 
 	if (ret < 0) {
 		ILI_ERR("Failed to upgrade firmware, ret = %d\n", ret);
 	}
+
 	ilits->aod_in = 0;
 
 	mutex_unlock(&chip_info->touch_mutex);
@@ -3010,24 +3033,22 @@ static int ilitek_waterproof_control(bool enable)
 {
 	int ret = 0;
 	u8 cmd[4] = {0xDA, 0x00, 0x01, 0x00};
-	ILI_DBG("ENTER waterproof mode = %d \n", enable);
-	if (enable) {
-		cmd[3] = 0x00;
-		ret = ilits->wrapper(cmd, sizeof(cmd), NULL, 0, OFF, OFF);
-		if (ret < 0) {
-			ILI_ERR("waterproof control enable fail \n");
-		}
-	}
-	else {
-		cmd[3] = 0x02;
-		ret = ilits->wrapper(cmd, sizeof(cmd), NULL, 0, OFF, OFF);
-		if (ret < 0) {
-			ILI_ERR("waterproof control disable fail \n");
-		}
-	}
-	return ret;
-}
 
+	ILI_DBG("ENTER waterproof mode = %d\n", enable);
+
+	cmd[3] = enable ? 0x00 : 0x02;
+
+	ret = ilits->wrapper(cmd, sizeof(cmd), NULL, 0, OFF, OFF);
+	if (ret < 0) {
+		ILI_ERR("Failed to %s waterproof mode, ret=%d\n",
+				enable ? "enable" : "disable", ret);
+		return ret;
+	}
+
+	ILI_INFO("Waterproof mode %s successfully\n",
+			enable ? "enabled" : "disabled");
+	return 0;
+}
 
 static u32 ilitek_trigger_reason(void *chip_data, int gesture_enable,
 				 int is_suspended)
@@ -3164,8 +3185,10 @@ static int ilitek_mode_switch(void *chip_data, work_mode mode, int flag)
 		}
 
 		break;
-	case MODE_AOD:
-		ILI_INFO("MODE_AOD flag = %d\n", flag);
+
+	case MODE_INCELL_AOD:
+		ILI_INFO("MODE_INCELL_AOD flag = %d\n", flag);
+		chip_info->gesture = flag;
 		ret = ili_aod_control(flag);
 		break;
 
@@ -3183,7 +3206,7 @@ static int ilitek_mode_switch(void *chip_data, work_mode mode, int flag)
 			if (chip_info->actual_tp_mode != P5_X_FW_GESTURE_MODE) {
 				ili_sleep_handler(TP_SUSPEND);
 
-			} else if (ilits->aod_in && ilits->ts->aod_gesture_support) {
+			} else if (ilits->aod_in && ilits->ts->incell_aod_gesture_support) {
 				ili_sleep_handler(TP_SUSPEND);
 			} else {
 				ili_proximity_far(WAKE_UP_SWITCH_GESTURE_MODE);
@@ -3229,11 +3252,10 @@ static int ilitek_mode_switch(void *chip_data, work_mode mode, int flag)
 		break;
 
 	case MODE_HEADSET:
-		if (ilits->aod_in && ilits->ts->aod_gesture_support) {
+		if (ilits->aod_in && ilits->ts->incell_aod_gesture_support) {
 			ILI_DBG("aod state not set MODE_HEADSET\n");
 			break;
 		}
-
 		ILI_INFO("MODE_HEADSET flag = %d\n", flag);
 
 		if (ili_ic_func_ctrl("ear_phone", flag) < 0) {
@@ -3243,11 +3265,10 @@ static int ilitek_mode_switch(void *chip_data, work_mode mode, int flag)
 		break;
 
 	case MODE_CHARGE:
-		if (ilits->aod_in && ilits->ts->aod_gesture_support) {
+		if (ilits->aod_in && ilits->ts->incell_aod_gesture_support) {
 			ILI_DBG("aod state not set MODE_CHARGE\n");
 			break;
 		}
-
 		ILI_INFO("MODE_CHARGE flag = %d\n", flag);
 
 		if (ili_ic_func_ctrl("plug", !flag) < 0) {
@@ -3257,7 +3278,7 @@ static int ilitek_mode_switch(void *chip_data, work_mode mode, int flag)
 		break;
 
 	case MODE_GAME:
-		if (ilits->aod_in && ilits->ts->aod_gesture_support) {
+		if (ilits->aod_in && ilits->ts->incell_aod_gesture_support) {
 			ILI_DBG("aod state not set MODE_GAME\n");
 			break;
 		}
@@ -3270,8 +3291,7 @@ static int ilitek_mode_switch(void *chip_data, work_mode mode, int flag)
 		break;
 
 	case MODE_GLOVE:
-		ILI_INFO("MODE_GLOVE flag = %d ts->pocket_prevent_mode = %d\n",
-			flag, chip_info->ts->pocket_prevent_mode);
+		ILI_INFO("MODE_GLOVE flag = %d\n", flag);
 
 		if (ili_ic_func_ctrl("glove", flag) < 0) {
 			ILI_ERR("write MODE_GLOVE flag failed\n");
@@ -3449,7 +3469,7 @@ static int ilitek_smooth_lv_set(void *chip_data, int level)
 	struct ilitek_ts_data *chip_info = (struct ilitek_ts_data *)chip_data;
 	int ret = 0;
 	uint8_t temp[4] = {0x01, 0x0B, 0x02, 0x00};
-	if (ilits->aod_in && ilits->ts->aod_gesture_support) {
+	if (ilits->aod_in && ilits->ts->incell_aod_gesture_support) {
 		ILI_DBG("aod state not set smooth\n");
 		return ret;
 	}
@@ -3467,7 +3487,7 @@ static int ilitek_sensitive_lv_set(void *chip_data, int level)
 	struct ilitek_ts_data *chip_info = (struct ilitek_ts_data *)chip_data;
 	int ret = 0;
 	uint8_t temp[4] = {0x01, 0x0B, 0x01, 0x00};
-	if (ilits->aod_in && ilits->ts->aod_gesture_support) {
+	if (ilits->aod_in && ilits->ts->incell_aod_gesture_support) {
 		ILI_DBG("aod state not set sensitive\n");
 		return ret;
 	}
@@ -3574,7 +3594,7 @@ static bool ilitek_irq_throw_away(void *chip_data)
 	return false;
 }
 
-static void ilitek_getglove_mode_status(void *chip_data, int *enable)
+static void ilitek_getglove_mode_status(void *chip_data, int *enable, int *count)
 {
 	u8 cmd_write[3] = { 0xDA, 0x01, 0x02 };
 	u8 cmd_read[4] = { 0 };
@@ -3617,15 +3637,7 @@ static void ilitek_read_water_flag(void *chip_data)
 
 	mutex_lock(&chip_info->touch_mutex);
 	ILI_INFO("write 0x01, 0x32, 0x00 than read\n");
-/*
-	ret = ilits7807s->wrapper(temp, 3, NULL, 0, OFF, OFF);
-	if (ret < 0) {
-        ILI_ERR("Failed to write 0x01, 0x32, 0x00 command, %d\n", ret);
-        goto out;
-    }
 
-    mdelay(1);//ritchie add use mdelay not use int 20240311
-*/
 	ret = ilits->wrapper(temp, 3, data, 4, ON, OFF);
 	if (ret < 0) {
 		ILI_ERR("write than Read waterflage failed, %d\n", ret);
@@ -3661,7 +3673,6 @@ static void ilitek_aiunit_game_info(void *chip_data)
 	}
 	mutex_lock(&chip_info->touch_mutex);
 	memset(cmd, 0xFF, sizeof(cmd));
-
 	/*CMD and SubCMD*/
 	cmd[index++] = GAME_AIUINIT_CMD;
 	cmd[index++] = GAME_AIUINIT_SUBCMD;
@@ -3726,34 +3737,6 @@ static void ilitek_aiunit_game_info(void *chip_data)
 	mutex_unlock(&chip_info->touch_mutex);
 }
 
-static void ilitek_edge_limit_switch_write(void *chip_data, int value)
-{
-	struct ilitek_ts_data *chip_info = (struct ilitek_ts_data *)chip_data;
-	uint8_t cmd[3] = {0x01, 0x12, 0x03};
-	int retval = 0;
-
-	if (chip_info->ts->is_suspended) {
-		return;
-	}
-	if((value < 0) || value > 1) {
-		TPD_INFO("%s: fts_edge_limit_switch_write value error\n", __func__);
-		return;
-	}
-	if (value == 0) {
-		mutex_lock(&chip_info->touch_mutex);
-		retval = ilits->wrapper(cmd, sizeof(cmd), NULL, 0, OFF, OFF);
-		if (retval < 0) {
-			ILI_ERR(" send cmd fail\n");
-		}
-		else {
-			ILI_INFO("disable fw edge limit success !\n");
-		}
-		mutex_unlock(&chip_info->touch_mutex);
-	} else {
-		ILI_INFO("fw edge limit default enabled\n");
-	}
-}
-
 static struct oplus_touchpanel_operations ilitek_ops = {
 	.ftm_process                = ilitek_ftm_process,
 	.ftm_process_extra          = ilitek_ftm_process_extra,
@@ -3775,11 +3758,10 @@ static struct oplus_touchpanel_operations ilitek_ops = {
 	.tp_queue_work_prepare      = ilitek_reset_queue_work_prepare,
 	.tp_irq_throw_away          = ilitek_irq_throw_away,
 	.rate_white_list_ctrl   	= ilitek_rate_white_list_ctrl,
-	.edge_limit_switch_write    = ilitek_edge_limit_switch_write,
 	.diaphragm_touch_lv_set     = ilitek_diaphragm_touch_lv_set,
+	.get_glove_mode             = ilitek_getglove_mode_status,
 	.get_water_mode             = ilitek_read_water_flag,
 	.force_water_mode           = ilitek_force_water_mode,
-	.get_glove_mode             = ilitek_getglove_mode_status,
 	.aiunit_game_info           = ilitek_aiunit_game_info,
 };
 
@@ -3905,11 +3887,11 @@ static int ilitek_read_debug_data(struct seq_file *s,
 			for (j = 0; j < xch; j++) {
 				s16 temp;
 				if (ilits->position_high_resolution == OFF) {
-					temp = (s16)((buf[(i * xch + j) * 2 + offset_len] << 8)
-								 + buf[(i * xch + j) * 2 + offset_len + 1]);
+	                temp = (s16)((buf[(i * xch + j) * 2 + offset_len] << 8)
+	                             + buf[(i * xch + j) * 2 + offset_len + 1]);
 				} else {
-					temp = (s16)((buf[(i * xch + j) * 2 + offset_len] << 8)
-								 + buf[(i * xch + j) * 2 + offset_len + 1]);
+	                temp = (s16)((buf[(i * xch + j) * 2 + offset_len] << 8)
+	                             + buf[(i * xch + j) * 2 + offset_len + 1]);
 				}
 				seq_printf(s, "%5d,", temp);
 			}
@@ -4240,6 +4222,7 @@ static int  ili_apk_gesture_info(void *chip_data, char *buf, int len)
 		case GESTURE_DOUBLECLICK:
 			buf[0]  = DOU_TAP;
 			break;
+
 		case GESTURE_SINGLECLICK:
 			buf[0]  = SINGLE_TAP;
 			break;
@@ -4613,12 +4596,12 @@ int ilitek7807s_spi_probe(struct spi_device *spi)
 		ILI_ERR("spi device is NULL\n");
 		return -ENODEV;
 	}
-
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	if (spi->master->flags & SPI_MASTER_HALF_DUPLEX) {
 		ILI_ERR("Full duplex not supported by master\n");
 		return -EIO;
 	}
-
+#endif
 	reset_healthinfo_time_counter(&time_counter);
 
 	/*step1:Alloc chip_info*/
@@ -4760,14 +4743,20 @@ err_out:
 	return ret;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+void ilitek7807s_spi_remove(struct spi_device *spi)
+#else
 int ilitek7807s_spi_remove(struct spi_device *spi)
+#endif
 {
 	struct touchpanel_data *ts = spi_get_drvdata(spi);
 	ILI_INFO("\n");
 	spi_set_drvdata(spi, NULL);
 	ili_kfree((void **)&ts);
 	ilitek_free_global_data();
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
 	return 0;
+#endif
 }
 static int ilitek_spi_resume(struct device *dev)
 {

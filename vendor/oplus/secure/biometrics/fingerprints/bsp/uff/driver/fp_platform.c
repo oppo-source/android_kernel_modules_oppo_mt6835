@@ -16,6 +16,7 @@
 #include <linux/workqueue.h>
 #include <linux/mutex.h>
 #include "fp_driver.h"
+#include <linux/pinctrl/consumer.h>
 
 #if defined(CONFIG_FP_SUPPLY_MODE_LDO)
 #include "wl2868c.h"
@@ -509,6 +510,12 @@ void fp_cleanup_device(struct fp_dev *fp_dev) {
     if (gpio_is_valid(fp_dev->reset_gpio)) {
         gpio_free(fp_dev->reset_gpio);
         pr_info("remove reset_gpio success\n");
+    }
+    if (fp_dev->gpio_intr3_available == true) {
+        if (gpio_is_valid(fp_dev->gpio_intr3)) {
+            gpio_free(fp_dev->gpio_intr3);
+            pr_info("remove gpio_intr3 success\n");
+        }
     }
 
     fp_cleanup_pwr_list(fp_dev);

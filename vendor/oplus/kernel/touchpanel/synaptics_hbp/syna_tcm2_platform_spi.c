@@ -35,7 +35,8 @@
  * This file is the reference code of I2C module used for communicating with
  * Synaptics TouchCom device using I2C
  */
-
+#include <linux/pinctrl/consumer.h>
+#include <linux/of_gpio.h>
 #include <linux/spi/spi.h>
 #ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
 #include <linux/platform_data/spi-mt65xx.h>
@@ -554,7 +555,11 @@ static int syna_spi_get_regulator(struct syna_hw_interface *hw_if,
 			goto regulator_vdd_put;
 		} else {
 			if (regulator_count_voltages(pwr->avdd_reg_dev) > 0) {
-				retval = regulator_set_voltage(pwr->avdd_reg_dev, 3100000, 3100000);
+				if (pwr->vdd) {
+					retval = regulator_set_voltage(pwr->avdd_reg_dev, pwr->vdd, pwr->vdd);
+				} else {
+					retval = regulator_set_voltage(pwr->avdd_reg_dev, 3100000, 3100000);
+				}
 				if (retval) {
 					LOGE("Regulator set_avdd_vtg failed rc = %d\n", retval);
 					goto exit;
@@ -757,13 +762,30 @@ static int syna_spi_parse_dt(struct syna_hw_interface *hw_if,
 	struct syna_hw_pwr_data *pwr = &hw_if->bdata_pwr;
 	struct syna_hw_rst_data *rst = &hw_if->bdata_rst;
 	struct syna_hw_bus_data *bus = &hw_if->bdata_io;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	int buf[3] = {0, 0, 0};
+	int ret = 0;
+#endif
 
 	LOGI("%s is called.\n", __func__);
 	prop = of_find_property(np, "synaptics,irq-gpio", NULL);
 	if (prop && prop->length) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+		attn->irq_gpio = of_get_named_gpio(np,
+				"synaptics,irq-gpio", 0);
+		ret = of_property_read_u32_array(np, "irq-gpio", buf, 3);
+		if (ret) {
+				LOGE("attn->irq_flags %lu\n", attn->irq_flags);
+				attn->irq_flags = 0x2008;
+		} else {
+				attn->irq_flags = buf[2];
+				LOGE("irq flag use 0x%lu.\n", attn->irq_flags);
+	}
+#else
 		attn->irq_gpio = of_get_named_gpio_flags(np,
 				"synaptics,irq-gpio", 0,
 				(enum of_gpio_flags *)&attn->irq_flags);
+#endif
 	} else {
 		attn->irq_gpio = -1;
 	}
@@ -788,7 +810,11 @@ static int syna_spi_parse_dt(struct syna_hw_interface *hw_if,
 	} else {
 		pwr->psu = (int)PSU_REGULATOR;
 	}
-
+	retval = of_property_read_u32(np, "synaptics,vdd_2v8_volt", &pwr->vdd);
+	if (retval < 0) {
+		pwr->vdd = 0;
+		LOGE("synaptics,vdd_2v8_volt not defined\n");
+	}
 	retval = of_property_read_string(np, "synaptics,avdd-name", &name);
 	if (retval < 0)
 		pwr->avdd_reg_name = NULL;
@@ -809,8 +835,13 @@ static int syna_spi_parse_dt(struct syna_hw_interface *hw_if,
 
 	prop = of_find_property(np, "synaptics,vdd-gpio", NULL);
 	if (prop && prop->length) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+		pwr->vdd_gpio = of_get_named_gpio(np,
+				"synaptics,vdd-gpio", 0);
+#else
 		pwr->vdd_gpio = of_get_named_gpio_flags(np,
 				"synaptics,vdd-gpio", 0, NULL);
+#endif
 	} else {
 		pwr->vdd_gpio = -1;
 	}
@@ -818,8 +849,13 @@ static int syna_spi_parse_dt(struct syna_hw_interface *hw_if,
 
 	prop = of_find_property(np, "synaptics,avdd-gpio", NULL);
 	if (prop && prop->length) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+		pwr->avdd_gpio = of_get_named_gpio(np,
+				"synaptics,avdd-gpio", 0);
+#else
 		pwr->avdd_gpio = of_get_named_gpio_flags(np,
 				"synaptics,avdd-gpio", 0, NULL);
+#endif
 	} else {
 		pwr->avdd_gpio = -1;
 	}
@@ -858,8 +894,13 @@ static int syna_spi_parse_dt(struct syna_hw_interface *hw_if,
 
 	prop = of_find_property(np, "synaptics,reset-gpio", NULL);
 	if (prop && prop->length) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+		rst->reset_gpio = of_get_named_gpio(np,
+				"synaptics,reset-gpio", 0);
+#else
 		rst->reset_gpio = of_get_named_gpio_flags(np,
 				"synaptics,reset-gpio", 0, NULL);
+#endif
 	} else {
 		rst->reset_gpio = -1;
 	}
@@ -956,8 +997,13 @@ static int syna_spi_parse_dt(struct syna_hw_interface *hw_if,
 
 	prop = of_find_property(np, "synaptics,io-switch-gpio", NULL);
 	if (prop && prop->length) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+		bus->switch_gpio = of_get_named_gpio(np,
+				"synaptics,io-switch-gpio", 0);
+#else
 		bus->switch_gpio = of_get_named_gpio_flags(np,
 				"synaptics,io-switch-gpio", 0, NULL);
+#endif
 	} else {
 		bus->switch_gpio = -1;
 	}
@@ -1293,11 +1339,16 @@ static int syna_spi_probe(struct spi_device *spi)
 	struct syna_hw_attn_data *attn = &syna_spi_hw_if.bdata_attn;
 	struct syna_hw_bus_data *bus = &syna_spi_hw_if.bdata_io;
 	struct syna_hw_rst_data *rst = &syna_spi_hw_if.bdata_rst;
+	struct device_node *np = spi->dev.of_node;
+	int cs_setup[2] = {0, 0};
+	int ret = 0;
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	if (spi->master->flags & SPI_MASTER_HALF_DUPLEX) {
 		LOGE("Full duplex not supported by host\n");
 		return -EIO;
 	}
+#endif
 
 	/* allocate an spi platform device */
 	syna_spi_device = platform_device_alloc(PLATFORM_DRIVER_NAME, 0);
@@ -1308,6 +1359,27 @@ static int syna_spi_probe(struct spi_device *spi)
 
 #ifdef CONFIG_OF
 	syna_spi_parse_dt(&syna_spi_hw_if, &spi->dev);
+#endif
+
+	ret = of_property_read_u32_array(np, "spi-cs-setup", cs_setup, 2);
+	if (ret) {
+		LOGE("spi-cs-setup is null\n");
+	} else {
+		spi->cs_setup.value = cs_setup[0];
+		spi->cs_setup.unit = cs_setup[1];
+		LOGI("cs_setup %d %d\n", cs_setup[0], cs_setup[1]);
+	}
+
+#ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#else
+	if (cs_setup[0] == 0) {
+		bus->delay_params.spi_cs_clk_delay = 50;
+	} else {
+		bus->delay_params.spi_cs_clk_delay = cs_setup[0];
+	}
+	bus->delay_params.spi_inter_words_delay = cs_setup[1];
+	spi->controller_data = (void *)&bus->delay_params;
+	LOGI("qcom cs_setup %d %d\n", cs_setup[0], cs_setup[1]);
 #endif
 
 	syna_pal_mutex_alloc(&attn->irq_en_mutex);
@@ -1443,6 +1515,7 @@ static const struct of_device_id syna_spi_of_match_table[] = {
 	{
 		.compatible = "synaptics,tcm-spi-hbp",
 	},
+	{	.compatible = "oplus,tp_noflash", },
 	{},
 };
 MODULE_DEVICE_TABLE(of, syna_spi_of_match_table);

@@ -80,7 +80,11 @@
 #include <linux/version.h>
 
 #if defined(CONFIG_DRM_MEDIATEK_V2)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+#include <linux/mtk_disp_notify.h>
+#else
 #include "mtk_disp_notify.h"
+#endif
 #endif
 
 #endif
@@ -113,6 +117,7 @@
 #define WAKELOCK_HOLD_IRQ_TIME 500 /* in ms */
 #define WAKELOCK_HOLD_CMD_TIME 1000 /* in ms */
 #define SHELL_ABNORMAL_TEMPERATURE 1000
+#define DOWN_BEFORE_ENABLE_TP 1
 
 #define OPLUS_FP_DEVICE_NAME "oplus,fp_spi"
 #define FP_DEV_NAME "fingerprint_dev"
@@ -124,6 +129,10 @@
 #define NETLINK_INIT_SUCCESS 0
 
 #if defined(MTK_PLATFORM) && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+#define VOID_REMOVE
+#endif
+
+#if defined(QCOM_PLATFORM) && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
 #define VOID_REMOVE
 #endif
 
@@ -380,6 +389,54 @@ static int local_hbm_get_temperature(void)
     return min_shell_temp / 1000;
 }
 
+static int fp_get_frame_temperature_dgr(void)
+{
+    const char *shell_tz[] = {"shell_frame"};
+    int shell_temp = FRAME_INVALID_TEMP;
+    int ret = 0;
+    unsigned int i = 0;
+    struct thermal_zone_device *tz = NULL;
+    pr_info("%s, enter\n", __func__);
+    tz = thermal_zone_get_zone_by_name(shell_tz[0]);
+    if (IS_ERR(tz)) {
+        pr_err("%s, Fail to get thermal zone. ret: %ld\n", __func__, PTR_ERR(tz));
+        return FRAME_INVALID_TEMP;
+    }
+    ret = thermal_zone_get_temp(tz, &shell_temp);
+    if (ret) {
+        pr_err("%s, Fail to get thermal. ret: %d\n", __func__, ret);
+        return FRAME_INVALID_TEMP;
+    }
+    pr_info("%s, %d : shell_temp = %d\n", __func__, i, shell_temp);
+    return shell_temp / 1000;
+}
+
+static int get_battery_temperature_dgr(void)
+{
+    struct power_supply *psy = NULL;
+    union power_supply_propval pval = {0};
+    int batt_temp = BATT_INVALID_TEMP;
+    int rc = 0;
+
+    psy = power_supply_get_by_name("battery");
+    if (!psy) {
+        pr_err("%s, battery psy not found!\n", __func__);
+        batt_temp = BATT_INVALID_TEMP;
+    } else {
+        rc = power_supply_get_property(psy, POWER_SUPPLY_PROP_TEMP, &pval);
+        if (rc < 0) {
+            pr_err("%s, can't get battery temp, rc = %d\n", __func__, rc);
+            batt_temp = BATT_INVALID_TEMP;
+        } else {
+            batt_temp = pval.intval / 10;
+            pr_info("%s, get battery temp = %d\n", __func__, batt_temp);
+        }
+        power_supply_put(psy);
+    }
+
+    return batt_temp;
+}
+
 static void fp_auto_send_touchdown(void)
 {
     struct fp_underscreen_info tp_info = {0};
@@ -617,6 +674,22 @@ static long fp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
             pr_info("%s FP_IOC_LHBM_TEMPERATURE\n", __func__);
             retval = __put_user(local_hbm_get_temperature(), (int32_t __user *)arg);
             break;
+        case FP_IOC_BATT_TEMPERATURE:
+            pr_info("%s FP_IOC_BATT_TEMPERATURE\n", __func__);
+            retval = __put_user(get_battery_temperature_dgr(), (int32_t __user *)arg);
+            break;
+        case FP_IOC_FRAME_TEMPERATURE:
+            pr_info("%s FP_IOC_FRAME_TEMPERATURE\n", __func__);
+            retval = __put_user(fp_get_frame_temperature_dgr(), (int32_t __user *)arg);
+            break;
+        case FP_IOC_INTR3_ENABLE:
+            pr_info("%s FP_IOC_INTR3_ENABLE\n", __func__);
+            fp_enable_intr3(fp_dev);
+            break;
+        case FP_IOC_INTR3_DISABLE:
+            pr_info("%s FP_IOC_INTR3_DISABLE\n", __func__);
+            fp_disable_intr3(fp_dev);
+            break;
         default:
             pr_warn("unsupport cmd:0x%x\n", cmd);
             break;
@@ -840,39 +913,102 @@ static int oplus_fb_notifier_call(struct notifier_block *nb, unsigned long val, 
 }
 #if defined(CONFIG_OPLUS_FINGERPRINT_GKI_ENABLE)
 static int oplus_tp_notifier_call(struct notifier_block *nb, unsigned long val, void *data) {
-    struct touchpanel_event* tp_event = (struct touchpanel_event*)data;
+    struct fp_dev *fp_dev        = &fp_dev_data;
+    struct touchpanel_event *tp_event = NULL;
+    struct fp_underscreen_info fp_info = {0};
+    struct fp_underscreen_info *tp_info = &fp_info;
+    struct fp_touch_film_info *p_tp_film_info = NULL;
+    struct touch_fp_grip_info *tp_grip_info = NULL;
+    struct fp_touch_under_water_info  *p_tp_under_water_info = NULL;
+    fp_tp_ai_film_info_t tp_film_info = {0};
+    fp_tp_under_water_info_t tp_under_water_info = {0};
     char msg = 0;
     (void)nb;
 
-    if (tp_event->touch_state == lasttouchmode) {
-        return IRQ_HANDLED;
-    }
-
     pr_info("recv tp event:%d\n", (int)val);
-    if (val == EVENT_ACTION_FOR_FINGPRINT) {
-        struct fp_underscreen_info fp_info = {0};
-        struct fp_underscreen_info* tp_info = &fp_info;
+    switch (val) {
+        case EVENT_ACTION_FOR_FINGPRINT:
+            tp_event = (struct touchpanel_event *)data;
+            if (tp_event->touch_state == lasttouchmode) {
+                return IRQ_HANDLED;
+            }
 
-        tp_info->touch_state = tp_event->touch_state;
-        tp_info->x = tp_event->x;
-        tp_info->y = tp_event->y;
+            tp_info->touch_state = tp_event->touch_state;
+            tp_info->x = tp_event->x;
+            tp_info->y = tp_event->y;
+            tp_info->touch_early_down_flag = tp_event->touch_early_down_flag;
+            tp_info->is_touch_fp_area_cnt = tp_event->is_touch_fp_area_cnt;
+            tp_info->touch_fp_area_time = tp_event->touch_fp_area_time;
+            tp_info->fp_down_time = tp_event->fp_down_time;
+            tp_info->tp_firmware_time = tp_event->tp_firmware_time;
+            pr_info("tp_info->touch_state =%d, tp_info->x=%d, tp_info->y=%d, tp_firmware_time=%d\n",
+                tp_info->touch_state, tp_info->x, tp_info->y, tp_info->tp_firmware_time);
 
-        pr_info("tp_info->touch_state =%d, tp_info->x =%d, tp_info->y =%d,\n",
-            tp_info->touch_state, tp_info->x, tp_info->y);
+            pr_info("touch_early_down_flag = %d, is_touch_fp_area_cnt = %ld, fp_down_time %lld, touch_fp_area_time %lld\n",
+                tp_info->touch_early_down_flag, tp_info->is_touch_fp_area_cnt, tp_info->fp_down_time, tp_info->touch_fp_area_time);
 
-        wake_lock_timeout(&fp_wakelock, msecs_to_jiffies(WAKELOCK_HOLD_IRQ_TIME));
-        if (1 == tp_info->touch_state) {
-            pr_info("%s touch down touchdown\n", __func__);
-            msg = NETLINK_EVENT_TP_TOUCHDOWN;
-            lasttouchmode = tp_info->touch_state;
-            send_fingerprint_msg_by_type(E_FP_TP, tp_info->touch_state, tp_info, sizeof(struct fp_underscreen_info));
-        } else {
-            pr_info("%s touch up touchup\n", __func__);
-            msg = NETLINK_EVENT_TP_TOUCHUP;
-            send_fingerprint_msg_by_type(E_FP_TP, tp_info->touch_state, tp_info, sizeof(struct fp_underscreen_info));
-            lasttouchmode = tp_info->touch_state;
-        }
+            if (1 == tp_info->touch_state) {
+            // is_touch_fp_area_cnt Record the bright screen with finger pressing
+                if ((tp_info->touch_early_down_flag == DOWN_BEFORE_ENABLE_TP) && tp_info->is_touch_fp_area_cnt > 1) {
+                    pr_info("%s IS_TOUCH_FP_AREA_CNT GREATE THAN ONE, IRQ_HANDLED\n", __func__);
+                    return IRQ_HANDLED;
+                }
+            }
+
+            wake_lock_timeout(&fp_wakelock, msecs_to_jiffies(WAKELOCK_HOLD_IRQ_TIME));
+            if (1 == tp_info->touch_state) {
+                fp_enable_intr3(fp_dev);
+                pr_info("%s touch down touchdown\n", __func__);
+                msg = NETLINK_EVENT_TP_TOUCHDOWN;
+                lasttouchmode = tp_info->touch_state;
+                send_fingerprint_msg_by_type(E_FP_TP, tp_info->touch_state, tp_info, sizeof(struct fp_underscreen_info));
+            } else {
+                fp_disable_intr3(fp_dev);
+                pr_info("%s touch up touchup\n", __func__);
+                msg = NETLINK_EVENT_TP_TOUCHUP;
+                send_fingerprint_msg_by_type(E_FP_TP, tp_info->touch_state, tp_info, sizeof(struct fp_underscreen_info));
+                lasttouchmode = tp_info->touch_state;
+            }
+            break;
+
+        case EVENT_ACTION_FOR_FILM:
+            p_tp_film_info = (struct fp_touch_film_info *)data;
+            tp_film_info.is_filmed = p_tp_film_info->filmed;
+            tp_film_info.film_depth = p_tp_film_info->level;
+            tp_film_info.is_credible = p_tp_film_info->trusty;
+
+            wake_lock_timeout(&fp_wakelock, msecs_to_jiffies(WAKELOCK_HOLD_IRQ_TIME));
+            pr_info("%s tp_film_info.is_filmed = %d \n", __func__, tp_film_info.is_filmed);
+            pr_info("%s tp_film_info.film_depth = %d \n", __func__, tp_film_info.film_depth);
+            pr_info("%s tp_film_info.is_credible = %d \n", __func__, tp_film_info.is_credible);
+            send_fingerprint_msg_by_type(E_TP_AIFILM, E_FP_EVENT_AIFILM_INFO,
+                                         (void *)&tp_film_info,
+                                         sizeof(fp_tp_ai_film_info_t));
+            break;
+
+        case EVENT_ACTION_FOR_FP_GIRP:
+            tp_grip_info = (struct touch_fp_grip_info *)data;
+            pr_info("%s tp_grip_info.value = %d \n", __func__, tp_grip_info->value);
+            wake_lock_timeout(&fp_wakelock, msecs_to_jiffies(WAKELOCK_HOLD_IRQ_TIME));
+            send_fingerprint_msg_by_type(E_FP_TP_GRIP, tp_grip_info->value, tp_grip_info, sizeof(struct touch_fp_grip_info));
+            break;
+
+        case EVENT_ACTION_UNDER_WATER:
+            p_tp_under_water_info = (struct fp_touch_under_water_info *)data;
+            tp_under_water_info.is_underwater = p_tp_under_water_info->is_underwater;
+
+            wake_lock_timeout(&fp_wakelock, msecs_to_jiffies(WAKELOCK_HOLD_IRQ_TIME));
+            pr_info("%s tp_under_water_info.is_underwater = %d \n", __func__, tp_under_water_info.is_underwater);
+            send_fingerprint_msg_by_type(E_TP_AIFILM, E_FP_EVENT_UNDERWATER_INFO,
+                                         (void *)&tp_under_water_info,
+                                         sizeof(fp_tp_under_water_info_t));
+            break;
+
+        default:
+            pr_info("%s case enter default\n", __func__);
+            break;
     }
+
     return NOTIFY_OK;
 }
 #endif

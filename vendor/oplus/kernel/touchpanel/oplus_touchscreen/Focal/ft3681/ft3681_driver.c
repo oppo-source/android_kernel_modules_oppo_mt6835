@@ -2640,7 +2640,7 @@ static u32 ft3681_u32_trigger_reason(void *chip_data, int gesture_enable,
 	}
 
 	if ((touch_buf[1] == 0xFF) && (touch_buf[2] == 0xFF)
-	    && (touch_buf[3] == 0xFF)) {
+	    && (touch_buf[3] == 0xFF) && !CHK_BIT(result_event, IRQ_PALM)) {
 		TPD_INFO("Need recovery TP state");
 		return IRQ_FW_AUTO_RESET;
 	}
@@ -3609,12 +3609,12 @@ static void ft3681_get_rawdata_snr(struct chip_data_ft3681 *ts_data)
 	}
 }
 
-static void ft3681_tp_limit_data_write(void *chip_data, int count)
+static void ft3681_tp_data_record_write(void *chip_data, int count)
 {
 	struct chip_data_ft3681 *ts_data = (struct chip_data_ft3681 *)chip_data;
 	int ret = 0;
 
-	TPD_INFO("%s fts_tp_limit_data_write:%d \n", __func__, count);
+	TPD_INFO("%s ft3681_tp_data_record_write:%d \n", __func__, count);
 
 	if (count < 0) {
 		TPD_INFO("%s:count is error %d", __func__, count);
@@ -3966,7 +3966,7 @@ static struct debug_info_proc_operations ft3681_debug_info_proc_ops = {
 	.main_register_read = ft3681_main_register_read,
 	.self_delta_read   = ft3681_self_delta_read,
 	.delta_snr_read    = ft3681_delta_snr_read,
-	.tp_limit_data_write    = ft3681_tp_limit_data_write,
+	.tp_data_record_write    = ft3681_tp_data_record_write,
 };
 
 struct focal_debug_func ft3681_debug_ops = {

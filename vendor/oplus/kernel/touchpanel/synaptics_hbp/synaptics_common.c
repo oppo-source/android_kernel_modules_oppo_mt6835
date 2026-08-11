@@ -122,7 +122,7 @@ int syna_trx_short_test(struct seq_file *s, void *chip_data,
 			      syna_testdata->pos, "0x%02x, ", u_data8);
 
 		for (j = 0; j < 8; j++) {
-			if (1 == (u_data8 & (1 << j))) {
+			if (u_data8 & (1 << j)) {
 				TPD_INFO("trx short test failed at %d bits.\n", checked_bits + 1);
 
 				if (!error_count) {
@@ -859,6 +859,7 @@ int syna_hybrid_absnoise_test(struct seq_file *s, void *chip_data,
 	struct auto_test_item_header *item_header = NULL;
 	int32_t *p_selfdata_p = NULL, *p_selfdata_n = NULL;
 	unsigned char *buf = NULL;
+	uint8_t data_buf[64];
 	struct tcm_buffer test_data;
 
 	syna_tcm_buf_init(&test_data);
@@ -936,6 +937,13 @@ int syna_hybrid_absnoise_test(struct seq_file *s, void *chip_data,
 	}
 
 	syna_tcm_buf_unlock(&test_data);
+	store_to_file(syna_testdata->fp, syna_testdata->length,
+		      syna_testdata->pos, "\n");
+
+	snprintf(data_buf, 32, "fwversion: 0x%s\n", tcm->tcm_dev->app_info.customer_config_id);
+	tp_test_write(syna_testdata->fp, syna_testdata->length, data_buf, strlen(data_buf),
+			      syna_testdata->pos);
+
 	store_to_file(syna_testdata->fp, syna_testdata->length,
 		      syna_testdata->pos, "\n");
 
@@ -1022,6 +1030,43 @@ int syna_hybrid_rawcap_test_ad(struct seq_file *s, void *chip_data,
 	store_to_file(syna_testdata->fp, syna_testdata->length,
 		      syna_testdata->pos, "\n");
 
+	return error_count;
+}
+
+int syna_rst_test(struct seq_file *s, void *chip_data,
+				   struct auto_testdata *syna_testdata, struct test_item_info *p_test_item_info)
+{
+	int i = 0;
+	int count = 2;
+	int error_count = 0;
+	unsigned char code = 0;
+	struct syna_tcm *tcm = (struct syna_tcm *)chip_data;
+	struct tcm_message_data_blob *tcm_msg = NULL;
+
+	TPD_INFO("%s start.\n", __func__);
+
+	if (tcm->tcm_dev == NULL) {
+		TPD_INFO("%s tcm_dev is NULL\n", __func__);
+		error_count++;
+		goto exit;
+	}
+
+	tcm_msg = &tcm->tcm_dev->msg_data;
+
+	for (i = 0; i < count; i++) {
+		if (tcm->hw_if->ops_hw_reset) {
+			tcm->hw_if->ops_hw_reset(tcm->hw_if);
+			code = tcm_msg->status_report_code;
+
+			TPD_INFO("%s event code:0x%x\n", __func__, code);
+			if (code != REPORT_IDENTIFY)
+				error_count++;
+		} else {
+			TPD_INFO("%s no hardware reset \n", __func__);
+			error_count++;
+		}
+	}
+exit:
 	return error_count;
 }
 
@@ -1339,6 +1384,17 @@ int synaptics_auto_test(struct seq_file *s,  struct device *dev)
 
 		if (ret > 0) {
 			TPD_INFO("synaptics_capacity_test failed! ret is %d\n", ret);
+			error_count++;
+		}
+	}
+
+	if (!syna_test_ops->test12) {
+		TPD_INFO("item: %d not support\n", TYPE_TEST12);
+	} else {
+		ret = syna_test_ops->test12(s, tcm, &syna_testdata, NULL);
+
+		if (ret > 0) {
+			TPD_INFO("synaptics_rsttest failed! ret is %d\n", ret);
 			error_count++;
 		}
 	}

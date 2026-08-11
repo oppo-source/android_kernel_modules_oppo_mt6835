@@ -35,6 +35,7 @@
 #define GOODIX_READ_VERSION_RETRY   5
 #define FW_VERSION_INFO_ADDR        0x10014
 #define GOODIX_NORMAL_PID           "9966"
+#define GOODIX_RST_TEST_REG         0x10030
 
 
 #define GOODIX_DRIVER_VERSION			"v1.0.3"
@@ -51,6 +52,8 @@
 #define MAX_GT_IRQ_DATA_LENGTH      90       /*irq data(points,key,checksum) size read from irq*/
 #define MAX_GT_EDGE_DATA_LENGTH     50       /*irq edge data read from irq*/
 
+#define MAX_VOLUME_CNT 5
+#define VOLUME_ERR_BIT 0x20
 #define MAX_GESTURE_POINT_NUM       128      /*max point number of black gesture*/
 
 /* gesture type */
@@ -109,6 +112,7 @@
 #define GOODIX_FP_EVENT				0x08
 #define POINT_TYPE_STYLUS_HOVER		0x01
 #define POINT_TYPE_STYLUS			0x03
+#define POINT_TYPE_TOUCH			0x02
 /* TODO need confirm those event value*/
 #define GOODIX_FINGER_PRINT_EVENT   0x08
 #define GOODIX_FINGER_STATUS_EVENT  0x02
@@ -155,6 +159,7 @@
 #define GTP_SET_CMD_DATA0_OFFSET    4
 
 /* test addr */
+#define DATA_MUTUAL_DIFFDATA_ADDR   0x10426
 #define DATA_SYNC_ALGOLIB_ADDR      0x1036c
 #define DATA_DEGBU_FW_TX_OFFECT     10
 #define BYTES_PER_EDGE                      4
@@ -203,6 +208,13 @@
 #define GTP_CMD_GAME_MODE               0xC2
 #define GTP_CMD_GESTURE_MASK            0
 
+#define GTP_FREQ_REG                    0x9c
+#define GTP_FREQ_CMD_0                  0x00
+#define GTP_FREQ_CMD_1                  0x01
+#define GTP_FREQ_CMD_2                  0x02
+#define GTP_FREQ_CMD_3                  0x03
+#define GTP_FREQ_CMD_4                  0x04
+
 #define GTP_CMD_SIXTY_CMD               0xC5
 
 #define GTP_CMD_TEMP_CMD                0x60
@@ -217,6 +229,8 @@
 
 #define GOODIX_CMD_REG                  0x10174
 
+#define GTP_SCENE_TYPE_MASK             7
+#define GTP_HIGH_LOCK_GAME              0x02
 #define GTP_MASK_ENABLE                 0x01
 #define GTP_MASK_DISABLE                0x00
 /****************************Start of auto test ********************/
@@ -316,7 +330,7 @@ static char *test_item_name[MAX_TEST_ITEMS] = {
 	"SELF_RAWDATA_TEST",
 	"SHORT_TEST",
 	"",
-	"",
+	"RST_TEST",
 	"",
 	""
 };
@@ -361,7 +375,7 @@ enum PANEL_TYPE {
 	SAMSUNG_PANEL,
 };
 
-#define GOODIX_CHECK_HRTIMER_NS        150000000
+#define GOODIX_CHECK_HRTIMER_NS        300000000
 #define GOODIX_CHECK_HRTIMER_S         0
 #define GOODIX_PALM_IN_PEN_HRTIMER_S   5
 /* pen control cmd */
@@ -550,6 +564,9 @@ struct goodix_ic_info {
 	struct goodix_ic_info_misc misc;
 };
 #pragma pack()
+
+#define TEMPERATURE_CNT 3
+#define TEMPERATURE_SPECIAL 0
 
 #define MAX_CMD_DATA_LEN 10
 #define MAX_CMD_BUF_LEN  16
@@ -789,6 +806,7 @@ struct chip_data_brl {
 	bool                                pen_enable;
 	bool                                pen_support;
 	bool                                pen_support_opp;
+	bool                                no_need_osctest;
 	int                                 pen_input_state;
 	u8                                  pen_num;
 	u8                                  point_type;
@@ -811,6 +829,8 @@ struct chip_data_brl {
 	bool                                motor_coord_support;
 	bool                                motor_max_limit;
 	bool                                snr_read_support;
+	bool                                fpga_spi_agg_support;
+	bool                                kb_matrix_cal_num_support;
 
 	unsigned int                        pen_osc_frequency;
 	unsigned int                        hardware_trx_direction;
@@ -832,6 +852,7 @@ struct chip_data_brl {
 
 	int                                 tp_index;
 	u32                                 gesture_type;
+	u32                                 gesture_type1;
 
 	unsigned int                        touch_state;
 	unsigned int                        pen_state;
@@ -867,6 +888,8 @@ struct chip_data_brl {
 	u16                                pen_last_press;
 	unsigned int                       pen_press;
 	unsigned int                       pen_frq_val;
+	bool                               probe_complete;
+
 	/* ic state*/
 	bool                               game_enable;
 	bool                               gesture_enable;
@@ -881,6 +904,10 @@ struct chip_data_brl {
 	u8 *diff_rw_buf;
 	s16 *diff_buf;
 	u32 diff_size;
+	unsigned int                       high_volume_invalid_touch_cnt;
+	s16                                *rawdata;
+	u16                                kb_matrix_cal_num;
+	bool                               diff_sync_check;
 };
 
 /****************************End of struct declare***************************/

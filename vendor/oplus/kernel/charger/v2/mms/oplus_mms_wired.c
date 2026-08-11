@@ -43,6 +43,7 @@
 #define ONLINE_STATUS_ERR_CHECK_DELAY_MS	1000
 #define ONLINE_STATUS_ERR_CHECK_MAX		5
 #define OTG_OUTPUT_LEVEL_MAX			5
+#define DEFAULT_BATT_REALY_TEMP			250
 
 enum oplus_usbtemp_timer_stage {
 	OPLUS_USBTEMP_TIMER_STAGE0 = 0,
@@ -296,6 +297,8 @@ struct oplus_mms_wired {
 	bool support_adjust_reverse_chg_cur;
 	int shaft_btb_temp_threshod;
 	bool high_reverse_charging;
+	int power_role;
+	bool gauge_not_ready;
 };
 
 static struct oplus_mms_wired *g_mms_wired;
@@ -3330,10 +3333,10 @@ static bool oplus_usbtemp_temp_rise_fast_without_batt_temp(struct oplus_mms_wire
 	spec = &chip->usbtemp_spec;
 
 	if (chip->usbtemp_curr_status == OPLUS_USBTEMP_LOW_CURR) {
-		if ((((chip->usb_temp_l - batt_temp / 10) >= spec->usbtemp_temp_gap_low_without_batt_temp) &&
+		if (((((chip->usb_temp_l - batt_temp / 10) >= spec->usbtemp_temp_gap_low_without_batt_temp) &&
 		     (chip->usb_temp_l < USB_100C)) ||
 		    (((chip->usb_temp_r - batt_temp / 10) >= spec->usbtemp_temp_gap_low_without_batt_temp) &&
-		     (chip->usb_temp_r < USB_100C)))
+		     (chip->usb_temp_r < USB_100C))) && !chip->gauge_not_ready)
 			return true;
 		return false;
 	} else if (chip->usbtemp_curr_status == OPLUS_USBTEMP_HIGH_CURR) {
@@ -3581,7 +3584,6 @@ int oplus_usbtemp_monitor_common_new_method(void *data)
 	int count_r = 1, count_l = 1;
 	bool condition1 = false;
 	bool condition2 = false;
-	bool gauge_not_ready = false;
 	union mms_msg_data real_temp_data = { 0 };
 	int rc = 0;
 	int condition;
@@ -3611,12 +3613,11 @@ int oplus_usbtemp_monitor_common_new_method(void *data)
 
 	while (!kthread_should_stop()) {
 		wait_event_interruptible(chip->oplus_usbtemp_wq, (chip->usbtemp_check || chip->reverse_usbtemp_check));
-		if (chip->gauge_topic == NULL) {
-			gauge_not_ready = true;
-			delay = 100;
-			goto dischg;
+		if (chip->gauge_topic == NULL && !chip->gauge_not_ready) {
+			chip->batt_realy_temp = DEFAULT_BATT_REALY_TEMP;
+			chip->gauge_not_ready = true;
 		}
-		if (gauge_not_ready) {
+		if (chip->gauge_not_ready && chip->gauge_topic != NULL) {
 			rc = oplus_mms_get_item_data(chip->gauge_topic, GAUGE_ITEM_REAL_TEMP, &real_temp_data, false);
 			if (rc < 0) {
 				chg_err("can't get GAUGE_ITEM_HMAC data in  usbtemp_monitor new, rc=%d\n", rc);
@@ -3628,7 +3629,7 @@ int oplus_usbtemp_monitor_common_new_method(void *data)
 					chip->usbtemp_volt_l, chip->usb_temp_l, chip->usbtemp_volt_r, chip->usb_temp_r,
 					chip->batt_realy_temp, spec->support_hot_enter_kpoc);
 			}
-			gauge_not_ready = false;
+			chip->gauge_not_ready = false;
 		}
 		if (chip->dischg_flag)
 			goto dischg;

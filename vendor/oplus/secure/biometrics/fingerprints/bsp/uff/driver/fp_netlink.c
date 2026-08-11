@@ -51,6 +51,18 @@ static void write_fingerprint_msg(struct fingerprint_message_t* g_fingerprint_ms
             g_fingerprint_msg->module = E_FP_HAL;
             g_fingerprint_msg->event = E_FP_EVENT_STOP_INTERRUPT;
             break;
+        case E_TP_AIFILM:
+            g_fingerprint_msg->module = E_TP_AIFILM;
+            g_fingerprint_msg->event = event;
+            g_fingerprint_msg->out_size = size <= MAX_MESSAGE_SIZE ? size : MAX_MESSAGE_SIZE;
+            memcpy(g_fingerprint_msg->out_buf, data, g_fingerprint_msg->out_size);
+            break;
+        case E_FP_TP_GRIP:
+            g_fingerprint_msg->module = E_FP_TP_GRIP;
+            g_fingerprint_msg->event = event == 1 ? E_FP_EVENT_MISTOUCH_CLASP : E_FP_EVENT_MISTOUCH_UNCLASP;
+            g_fingerprint_msg->out_size = size <= MAX_MESSAGE_SIZE ? size : MAX_MESSAGE_SIZE;
+            memcpy(g_fingerprint_msg->out_buf, data, g_fingerprint_msg->out_size);
+            break;
         default:
             g_fingerprint_msg->module = module;
             g_fingerprint_msg->event = event;
@@ -136,7 +148,6 @@ int fp_netlink_init(void)
     netlink_cfg.groups = 0;
     netlink_cfg.flags = 0;
     netlink_cfg.input = fp_nl_data_ready;
-    netlink_cfg.cb_mutex = NULL;
 
     if (!nl_sk) {
         nl_sk = netlink_kernel_create(&init_net, NETLINKROUTE,

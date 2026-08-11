@@ -7,7 +7,6 @@
 #define _TRACE_KP_FREEZE_DETECT_H
 
 #include <linux/tracepoint.h>
-#include <linux/version.h>
 
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM kp_freeze_detect
@@ -25,15 +24,9 @@ TRACE_EVENT(key_process_frozen,
 	TP_fast_assign(
 		__entry->fault_timestamp_ms = fault_timestamp_ms;
 		__entry->app_id = app_id;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
-		__assign_str(log_tag);
-		__assign_str(event_id);
-		__assign_str(comm);
-#else
 		__assign_str(log_tag, log_tag);
-		__assign_str(event_id, event_id);
+		__assign_str(event_id, event_id)
 		__assign_str(comm, comm);
-#endif
 	),
 	TP_printk("fault_timestamp_ms:%ld app_id:%d log_tag:%s event_id:%s,key process (comm:%s)frozen detected",
 		__entry->fault_timestamp_ms, __entry->app_id, __get_str(log_tag), __get_str(event_id),

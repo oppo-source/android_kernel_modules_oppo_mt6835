@@ -158,8 +158,8 @@ static int cts_mode_switch(void *chip_data, work_mode mode, int flag)
 			TPD_INFO("<I> switch MODE_WATERPROOF: %s\n", flag ? "In" : "Out");
 			ret = cts_if->set_waterproof_mode(cts_dev, flag);
 			break;
-		case MODE_AOD:
-			TPD_INFO("<I> switch MODE_AOD: %s\n", flag ? "In" : "Out");
+		case MODE_INCELL_AOD:
+			TPD_INFO("<I> switch MODE_INCELL_AOD: %s\n", flag ? "In" : "Out");
 			ret = cts_if->set_aod_mode(cts_dev, flag);
 			break;
         default:
@@ -214,7 +214,7 @@ static unsigned int cts_trigger_reason(void *chip_data, int gesture_enable,
     }
 
    // gesture_info = &cts_dev->rtdata.gesture_info;
-    memmove(gesture_info, touch_info, sizeof(struct cts_device_gesture_info));
+    memcpy(gesture_info, touch_info, sizeof(struct cts_device_gesture_info));
     //TPD_INFO("palm_gesture_id = 0x%x\n", gesture_info->gesture_id);
     if (((gesture_info->gesture_id & 0xFF) == 0x30) && !(is_suspended == 1)) {
         TPD_INFO("palm_gesture_id = 0x%x\n", gesture_info->gesture_id);
@@ -298,7 +298,7 @@ static int cts_get_gesture_info(void *chip_data,
     struct cts_device_gesture_info *gesture_info = &cts_dev->rtdata.gesture_info;
     uint32_t gesture_type = 0;
 
-    memmove(gesture_info, touch_info, sizeof(struct cts_device_gesture_info));
+    memcpy(gesture_info, touch_info, sizeof(struct cts_device_gesture_info));
 
     TPD_INFO("<I> Process gesture, id=0x%02x, num_points=%d\n",
             gesture_info->gesture_id, gesture_info->num_points);
@@ -657,7 +657,7 @@ static int cts_smooth_lv_set(void *chip_data, int level)
 	int ret = -1;
 	uint8_t cmd = 1;
 	//mutex_lock(&chip_info->touch_mutex);
-	TPD_INFO("write smooth level, 0x%x(level)\n", level);	
+	TPD_INFO("write smooth level, 0x%x(level)\n", level);
 	if (cts_data == NULL) {
 		TPD_INFO("<E> cts_data = NULL!\n");
 		return -1;
@@ -674,7 +674,7 @@ static int cts_smooth_lv_set(void *chip_data, int level)
 			cmd = 0x00;
             break;
         case 4:	/* 四挡 */
-			cmd = 0x04;    
+			cmd = 0x04;
 			break;
         case 5:	/* 五档 */
 			cmd = 0x08;
@@ -698,7 +698,7 @@ static int cts_sensitive_lv_set(void *chip_data, int level)
 	int ret = -1;
 	uint8_t cmd = 1;
 	//mutex_lock(&chip_info->touch_mutex);
-	TPD_INFO("write sensitive level, 0x%x(level)\n", level);	
+	TPD_INFO("write sensitive level, 0x%x(level)\n", level);
 	if (cts_data == NULL) {
 		TPD_INFO("<E> cts_data = NULL!\n");
 		return -1;
@@ -715,7 +715,7 @@ static int cts_sensitive_lv_set(void *chip_data, int level)
 			cmd = 0x00;
             break;
         case 4:	/* 四挡 */
-			cmd = 0x04;    
+			cmd = 0x04;
 			break;
         case 5:	/* 五档 */
 			cmd = 0x08;
@@ -739,7 +739,7 @@ static int cts_diaphragm_touch_lv_set(void *chip_data, int level)
 	int ret = -1;
 	uint8_t cmd = 1;
 	//mutex_lock(&chip_info->touch_mutex);
-	TPD_INFO("diaphragm mode, 0x%x(level)\n", level);	
+	TPD_INFO("diaphragm mode, 0x%x(level)\n", level);
 	if (cts_data == NULL) {
 		TPD_INFO("<E> cts_data = NULL!\n");
 		return -1;
@@ -785,7 +785,6 @@ static void cts_read_water_flag(void *chip_data)
 
     if (cts_data == NULL) {
         TPD_INFO("<E> water cts_data = NULL!\n");
-        return;
     }
     cts_lock_device(cts_dev);
     ret = cts_if->get_water_flag(cts_dev, buf);
@@ -896,7 +895,7 @@ static int cts_gstr_noise_test(struct seq_file *s, void *chip_data,
 	struct cts_interface *cts_if = chip_info->cts_dev.cts_if;
 
 	chip_info->p_cts_test_para->test_work_mode = 1;
-	
+
 	return cts_if->gesture_noise_test_item(chip_info, cts_testdata);
 }
 
@@ -918,7 +917,7 @@ static int cts_gstr_lp_noise_test(struct seq_file *s, void *chip_data,
 	struct cts_interface *cts_if = chip_info->cts_dev.cts_if;
 
 	chip_info->p_cts_test_para->test_work_mode = 0;
-	
+
 	return cts_if->gesture_noise_test_item(chip_info, cts_testdata);
 }
 
@@ -938,7 +937,7 @@ static int cts_black_screen_test_preoperation(struct seq_file *s, void *chip_dat
 	uint8_t data_buf[128];
 
     TPD_INFO("<I> Enter %s!\n", __func__);
-	
+
 	TPD_INFO("panel_data.test_limit_name - %s \n", tsdata->panel_data.test_limit_name);
 	ret = request_firmware(&tsdata->com_test_data.limit_fw,
 			       tsdata->panel_data.test_limit_name, tsdata->dev);
@@ -1143,7 +1142,7 @@ static int cts_noise_test(struct seq_file *s, void *chip_data,
 {
 	struct chipone_ts_data *chip_info = (struct chipone_ts_data *)chip_data;
 	struct cts_interface *cts_if = chip_info->cts_dev.cts_if;
-	
+
 	return cts_if->noise_test_item(chip_info, cts_testdata);
 }
 
@@ -1152,7 +1151,7 @@ static int cts_open_test(struct seq_file *s, void *chip_data,
 {
 	struct chipone_ts_data *chip_info = (struct chipone_ts_data *)chip_data;
 	struct cts_interface *cts_if = chip_info->cts_dev.cts_if;
-	
+
 	return cts_if->open_test_item(chip_info, cts_testdata);
 }
 
@@ -1161,7 +1160,7 @@ static int cts_short_test(struct seq_file *s, void *chip_data,
 {
 	struct chipone_ts_data *chip_info = (struct chipone_ts_data *)chip_data;
 	struct cts_interface *cts_if = chip_info->cts_dev.cts_if;
-	
+
 	return cts_if->short_test_item(chip_info, cts_testdata);
 }
 
@@ -1170,7 +1169,7 @@ static int cts_comp_cap_test(struct seq_file *s, void *chip_data,
 {
 	struct chipone_ts_data *chip_info = (struct chipone_ts_data *)chip_data;
 	struct cts_interface *cts_if = chip_info->cts_dev.cts_if;
-	
+
 	return cts_if->compensate_cap_test_item(chip_info, cts_testdata);
 }
 
@@ -1189,7 +1188,7 @@ static int cts_autotest_preoperation(struct seq_file *s, void *chip_data,
 	uint8_t data_buf[128];
 
     TPD_INFO("<I> Enter %s!\n", __func__);
-	
+
 	TPD_INFO("panel_data.test_limit_name - %s \n", tsdata->panel_data.test_limit_name);
 	ret = request_firmware(&tsdata->com_test_data.limit_fw,
 			       tsdata->panel_data.test_limit_name, tsdata->dev);
@@ -1668,9 +1667,9 @@ static struct spi_driver cts_spi_driver = {
         .of_match_table = cts_tp_match_table,
         .pm = &tp_pm_ops,
     },
-    
+
 };
- 
+
 static int __init cts_driver_init(void)
 {
     TPD_INFO("<I> Chipone-tddi driver %s\n", CFG_CTS_DRIVER_VERSION);

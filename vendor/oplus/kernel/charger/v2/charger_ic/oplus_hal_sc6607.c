@@ -518,6 +518,66 @@ __maybe_unused static int sc6607_write_data(struct sc6607 *chip, u8 addr, u8 *bu
 	return ret;
 }
 
+static int sc6607_i2c_addr_read_byte(struct sc6607 *chip, u8 i2c_addr, u8 reg, u8 *val)
+{
+	struct i2c_msg xfer[2];
+	int ret;
+
+	if (!chip || !chip->client || !chip->client->adapter)
+		return -EINVAL;
+
+	xfer[0].addr = i2c_addr;
+	xfer[0].flags = 0;
+	xfer[0].len = 1;
+	xfer[0].buf = &reg;
+
+	xfer[1].addr = i2c_addr;
+	xfer[1].flags = I2C_M_RD;
+	xfer[1].len = 1;
+	xfer[1].buf = val;
+
+	ret = i2c_transfer(chip->client->adapter, xfer, ARRAY_SIZE(xfer));
+	if (ret != ARRAY_SIZE(xfer)) {
+		if (ret < 0)
+			chg_err("i2c transfer failed, addr=0x%02x, reg=0x%02x, ret=%d\n", i2c_addr, reg, ret);
+		else
+			chg_err("i2c transfer EIO, addr=0x%02x, reg=0x%02x, ret=%d\n", i2c_addr, reg, ret);
+		return ret < 0 ? ret : -EIO;
+	}
+
+	return 0;
+}
+
+static int sc6607_i2c_addr_write_byte(struct sc6607 *chip, u8 i2c_addr, u8 reg, u8 val)
+{
+	struct i2c_msg xfer[1];
+	u8 write_buf[2];
+	int ret;
+
+	if (!chip || !chip->client || !chip->client->adapter)
+		return -EINVAL;
+
+	write_buf[0] = reg;
+	write_buf[1] = val;
+
+	xfer[0].addr = i2c_addr;
+	xfer[0].flags = 0;
+	xfer[0].len = sizeof(write_buf);
+	xfer[0].buf = write_buf;
+
+	ret = i2c_transfer(chip->client->adapter, xfer, 1);
+	if (ret == 1) {
+		chg_info("i2c transfer successfully, addr=0x%02x, reg=0x%02x, val=0x%02x\n", i2c_addr, reg, val);
+		return 0;
+	} else if (ret < 0) {
+		chg_err("i2c transfer failed, addr=0x%02x, reg=0x%02x, ret=%d\n", i2c_addr, reg, ret);
+		return ret;
+	} else {
+		chg_err("i2c transfer EIO, addr=0x%02x, reg=0x%02x, ret=%d\n", i2c_addr, reg, ret);
+		return -EIO;
+	}
+}
+
 static void oplus_chg_get_batt_volt(int *batt_volt)
 {
 	union mms_msg_data data = {0};
@@ -1280,6 +1340,11 @@ static int sc6607_adc_read_ibus(struct sc6607 *chip)
 	if (!chip)
 		return -EINVAL;
 
+	if (chip->ufcs_enable) {
+		chg_info("ufcs in communication\n");
+		return chip->cp_ichg;
+	}
+
 	if (chip->voocphy && oplus_chg_get_fastchg_commu_ing()) {
 		chg_info("svooc in communication\n");
 		return chip->voocphy->cp_ichg;
@@ -1297,7 +1362,12 @@ static int sc6607_adc_read_vbus_volt(struct sc6607 *chip)
 	if (!chip)
 		return -EINVAL;
 
-	if (chip->voocphy && oplus_chg_get_fastchg_commu_ing() && !chip->camera_on) {
+	if (chip->ufcs_enable) {
+		chg_info("ufcs in communication\n");
+		return chip->cp_vbus;
+	}
+
+	if (chip->voocphy && oplus_chg_get_fastchg_commu_ing()) {
 		chg_info("svooc in communication\n");
 		return chip->voocphy->cp_vbus;
 	}
@@ -1314,6 +1384,11 @@ static int sc6607_adc_read_tsbus(struct sc6607 *chip)
 	if (!chip)
 		return -EINVAL;
 
+	if (chip->ufcs_enable) {
+		chg_info("ufcs in communication\n");
+		return chip->cp_tsbus;
+	}
+
 	tsbus = sc6607_hk_get_adc(chip, SC6607_ADC_TSBUS);
 
 	return tsbus;
@@ -1325,6 +1400,11 @@ static int sc6607_adc_read_tsbat(struct sc6607 *chip)
 
 	if (!chip)
 		return -EINVAL;
+
+	if (chip->ufcs_enable) {
+		chg_info("ufcs in communication\n");
+		return chip->cp_tsbat;
+	}
 
 	tsbat = sc6607_hk_get_adc(chip, SC6607_ADC_TSBAT);
 
@@ -2249,7 +2329,7 @@ static void oplus_sc6607_set_mivr_by_battery_vol(struct sc6607 *chip)
 }
 
 #define SC6607_DPDM_CTRL_REG_NUM	3
-int sc6607a_set_dpdm_ctrl(struct sc6607 *chip, bool enable)
+static int sc6607a_set_dpdm_ctrl(struct sc6607 *chip, bool enable)
 {
 	int ret = 0;
 	int i;
@@ -2276,6 +2356,59 @@ int sc6607a_set_dpdm_ctrl(struct sc6607 *chip, bool enable)
 	return 0;
 }
 
+int sc6607_set_ufcs_enable(struct sc6607 *chip, bool enable)
+{
+        if (!chip)
+                return -EINVAL;
+
+	if (enable)
+		sc6607_ufcs_get_value(chip);
+        chip->ufcs_enable = enable;
+        if (chip->is_sc6607a)
+                sc6607a_set_dpdm_ctrl(chip, enable);
+
+        return 0;
+}
+
+void sc6607_ufcs_get_value(struct sc6607 *chip)
+{
+	u8 data_block[18] = { 0 };
+	s32 ret = 0;
+
+	if (!chip)
+		return;
+
+	sc6607_field_write(chip, F_ADC_FREEZE, 1);
+	ret = i2c_smbus_read_i2c_block_data(chip->client, SC6607_REG_HK_IBUS_ADC, 18, data_block);
+	if (ret < 0) {
+		chg_err("adc i2c read failed: can't read 0x%0x, ret:%d\n", SC6607_REG_HK_IBUS_ADC, ret);
+		sc6607_field_write(chip, F_ADC_FREEZE, 0);
+		return;
+	}
+	sc6607_field_write(chip, F_ADC_FREEZE, 0);
+
+	chip->cp_ichg = (((data_block[0] & SC6607_VOOCPHY_IBUS_POL_H_MASK) << SC6607_VOOCPHY_IBUS_POL_H_SHIFT) |
+			data_block[1]) * SC6607_VOOCPHY_IBUS_ADC_LSB;
+
+	chip->cp_vbus = (((data_block[2] & SC6607_VOOCPHY_VBUS_POL_H_MASK) << SC6607_VOOCPHY_VBUS_POL_H_SHIFT) |
+			data_block[3]) * SC6607_VOOCPHY_VBUS_ADC_LSB;
+	chip->cp_vac = (((data_block[4] & SC6607_VOOCPHY_VAC_POL_H_MASK) << SC6607_VOOCPHY_VAC_POL_H_SHIFT) |
+			data_block[5]) * SC6607_VOOCPHY_VAC_ADC_LSB;
+
+	chip->cp_vbat = (((data_block[6] & SC6607_VOOCPHY_VBAT_POL_H_MASK) << SC6607_VOOCPHY_VBAT_POL_H_SHIFT) |
+			data_block[7]) * SC6607_VOOCPHY_VBAT_ADC_LSB;
+
+	chip->cp_tsbus = (((data_block[14] & SC6607_VOOCPHY_TSBUS_POL_H_MASK) << SC6607_VOOCPHY_TSBUS_POL_H_SHIFT) |
+			data_block[15]);
+	chip->cp_tsbat = (((data_block[16] & SC6607_VOOCPHY_TSBAT_POL_H_MASK) << SC6607_VOOCPHY_TSBAT_POL_H_SHIFT) |
+			data_block[17]);
+
+	chg_info("[sc6607_ufcs_value]:ichg=%d vbus=%d vac=%d vbat=%d tsbus=%d tsbat=%d, ret = %d\n",
+			chip->cp_ichg, chip->cp_vbus, chip->cp_vac, chip->cp_vbat,
+			  chip->cp_tsbus, chip->cp_tsbat, ret);
+	return;
+}
+
 static int sc6607_hk_irq_handle(struct sc6607 *chip)
 {
 	int ret;
@@ -2291,7 +2424,7 @@ static int sc6607_hk_irq_handle(struct sc6607 *chip)
 	if (atomic_read(&chip->driver_suspended))
 		chg_info("suspended and wait %d ms\n", SC6607_WAIT_RESUME_TIME);
 
-	if (chip->voocphy && oplus_chg_get_fastchg_commu_ing()) {
+	if ((chip->voocphy && oplus_chg_get_fastchg_commu_ing()) || chip->ufcs_enable) {
 		ret = sc6607_voocphy_read_byte(chip->client, SC6607_REG_HK_INT_STAT, &val[0]);
 		if (ret) {
 			chg_err("read hk int stat reg failed\n");
@@ -2463,6 +2596,10 @@ static int sc6607_dpdm_irq_handle(struct sc6607 *chip)
 	if (!chip)
 		return -EINVAL;
 
+	if (atomic_read(&chip->hvdcp_start)) {
+		oplus_sc6607_set_ichg(chip, SC6607_BUCK_ICHG_500MA);
+		sc6607_set_input_current_limit(chip, SC6607_DEFAULT_IBUS_MA);
+	}
 	sc6607_field_read(chip, F_HVDCP_EN, &hvdcp_en);
 	if (!hvdcp_en)
 		sc6607_set_input_current_limit(chip, SC6607_DEFAULT_IBUS_MA);
@@ -2878,6 +3015,28 @@ static void sc6607_set_cc_pull_down_idrive(struct sc6607 *chip)
 		chg_info("i2c transfer EIO\n");
 }
 
+static void sc6607_set_adc_sampling_mode_config(struct sc6607 *chip)
+{
+	u8 val = 0;
+	int ret;
+
+	if (!chip || !chip->client || !chip->client->adapter)
+		return;
+
+	/* read current value of reg 0xAE from I2C addr 0x64 (LED_SLAVE_ADDRESS) */
+	ret = sc6607_i2c_addr_read_byte(chip, LED_SLAVE_ADDRESS, SC6607_REG_ADC_SAMPLING_MODE_CFG_REG, &val);
+	if (ret < 0)
+		return;
+
+	chg_info("read reg 0x%x value:0x%x\n", SC6607_REG_ADC_SAMPLING_MODE_CFG_REG, val);
+	/* clear bit2 then write back */
+	val &= ~SC6607_LED_ADC_SAMPLING_MODE_CONFIG_MASK;
+
+	ret = sc6607_i2c_addr_write_byte(chip, LED_SLAVE_ADDRESS, SC6607_REG_ADC_SAMPLING_MODE_CFG_REG, val);
+	if (ret < 0)
+		return;
+}
+
 static void sc6607_set_continuous_time(struct sc6607 *chip)
 {
 	int ret = 0;
@@ -2983,6 +3142,7 @@ static int sc6607_init_device(struct sc6607 *chip)
 	chip->bc12_done = false;
 	chip->bc12_timeouts = 0;
 	chip->bc12_try_count = 0;
+	atomic_set(&chip->hvdcp_start, false);;
 
 	sc6607_disable_watchdog_timer(chip);
 	ret = sc6607_read_byte(chip, SC6607_REG_HK_FLT_FLG, &val);
@@ -3002,6 +3162,7 @@ static int sc6607_init_device(struct sc6607 *chip)
 		sc6607_set_pd_phy_tx_discard_time(chip);
 		sc6607_set_continuous_time(chip);
 		sc6607_enter_test_mode(chip, false);
+		sc6607_set_adc_sampling_mode_config(chip);
 	}
 
 	ret = sc6607_set_prechg_current(chip, chip->platform_data->iprechg);
@@ -4231,7 +4392,6 @@ static int sc6607_qc_detect_enable(struct oplus_chg_ic_dev *ic_dev, bool en)
 	int retry = QC_DETECT_RETRY;
 	u8 vbus_stat;
 	struct sc6607 *chip;
-	struct votable *icl_votable;
 
 	if (ic_dev == NULL) {
 		chg_err("ic_dev is NULL");
@@ -4256,6 +4416,7 @@ static int sc6607_qc_detect_enable(struct oplus_chg_ic_dev *ic_dev, bool en)
 	sc6607_detect_init(chip);
 	sc6607_enable_hvdcp(chip);
 	sc6607_force_dpdm(chip, true);
+	atomic_set(&chip->hvdcp_start, true);
 
 	while (retry--) {
 		chg_info("hvdcp detect retry:%d", retry);
@@ -4270,12 +4431,12 @@ static int sc6607_qc_detect_enable(struct oplus_chg_ic_dev *ic_dev, bool en)
 			break;
 		}
 	}
+	atomic_set(&chip->hvdcp_start, false);
 	if (chip->oplus_chg_type != POWER_SUPPLY_TYPE_USB_HVDCP) {
-		icl_votable = find_votable("WIRED_ICL");
-		if (!icl_votable)
-			chg_err("WIRED_ICL votable not found\n");
-		else
-			rerun_election(icl_votable, true);
+		if (is_wired_fcc_votable_available(chip))
+			rerun_election(chip->wired_fcc_votable, false);
+		if (is_wired_icl_votable_available(chip))
+			rerun_election(chip->wired_icl_votable, true);
 	}
 	sc6607_detect_release(chip);
 	return 0;

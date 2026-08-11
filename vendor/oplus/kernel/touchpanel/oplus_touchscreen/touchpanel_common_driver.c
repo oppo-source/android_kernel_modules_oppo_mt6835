@@ -5604,65 +5604,19 @@ static const struct file_operations tp_reserve_proc_fops = {
 };
 
 //proc/touchpanel/debug_info/data_limit
-static ssize_t tp_limit_data_write_func(struct file *file,
-				    const char __user *buffer, size_t count, loff_t *ppos)
-{
-	struct touchpanel_data *ts = PDE_DATA(file_inode(file));
-	struct debug_info_proc_operations *debug_info_ops = NULL;
-	int value = 0;
-	char buf[5] = {0};
-
-	TPD_DETAIL("%s tp_limit_data write enter\n", __func__);
-
-	if (!ts) {
-		return count;
-	}
-
-	if (!ts->tp_data_record_support) {
-		return count;
-	}
-
-	if (count > 5) {
-		TPD_INFO("%s:count > 5\n", __func__);
-		return count;
-	}
 
 
-	tp_copy_from_user(buf, sizeof(buf), buffer, count, 4);
 
-	if (kstrtoint(buf, 10, &value)) {
-		TPD_INFO("%s: kstrtoint error\n", __func__);
-		return count;
-	}
 
-	debug_info_ops = (struct debug_info_proc_operations *)(ts->debug_info_ops);
-	if (!debug_info_ops) {
-		TPD_INFO("debug_info_ops == NULL");
-		return 0;
-	}
-	if (!debug_info_ops->tp_limit_data_write) {
-		TPD_INFO("debug_info_ops->tp_limit_data_write == NULL");
-		return 0;
-	}
 
-	TPD_DETAIL("%s tp_limit_data write :%d\n", __func__, value);
 
-	if (ts->int_mode == BANNABLE) {
-		disable_irq_nosync(ts->irq);
-	}
-	mutex_lock(&ts->mutex);
 
-	if (debug_info_ops->tp_limit_data_write) {
-		debug_info_ops->tp_limit_data_write(ts->chip_data, value);
-	}
 
-	mutex_unlock(&ts->mutex);
-	if (ts->int_mode == BANNABLE) {
-		enable_irq(ts->irq);
-	}
 
-	return count;
-}
+
+
+
+
 
 static int tp_limit_data_read_func(struct seq_file *s, void *v)
 {
@@ -5692,8 +5646,75 @@ static const struct file_operations tp_limit_data_proc_fops = {
     .owner = THIS_MODULE,
     .open  = limit_data_open,
     .read  = seq_read,
-	.write = tp_limit_data_write_func,
     .release = single_release,
+};
+static ssize_t tp_data_record_write_func(struct file *file,
+				    const char __user *buffer, size_t count, loff_t *ppos)
+{
+	struct touchpanel_data *ts = PDE_DATA(file_inode(file));
+	struct debug_info_proc_operations *debug_info_ops = NULL;
+	int value = 0;
+	char buf[5] = {0};
+	TPD_DETAIL("%s tp_limit_data write enter\n", __func__);
+	if (!ts) {
+		return count;
+	}
+	if (!ts->tp_data_record_support) {
+		return count;
+	}
+	if (count > 5) {
+		TPD_INFO("%s:count > 5\n", __func__);
+		return count;
+	}
+	tp_copy_from_user(buf, sizeof(buf), buffer, count, 4);
+	if (kstrtoint(buf, 10, &value)) {
+		TPD_INFO("%s: kstrtoint error\n", __func__);
+		return count;
+	}
+	debug_info_ops = (struct debug_info_proc_operations *)(ts->debug_info_ops);
+	if (!debug_info_ops) {
+		TPD_INFO("debug_info_ops == NULL");
+		return 0;
+	}
+	if (!debug_info_ops->tp_data_record_write) {
+		TPD_INFO("debug_info_ops->tp_data_record_write == NULL");
+		return 0;
+	}
+	TPD_DETAIL("%s tp_data_record_write write :%d\n", __func__, value);
+	if (ts->int_mode == BANNABLE) {
+		disable_irq_nosync(ts->irq);
+	}
+	mutex_lock(&ts->mutex);
+	if (debug_info_ops->tp_data_record_write) {
+		debug_info_ops->tp_data_record_write(ts->chip_data, value);
+	}
+	if (ts->health_monitor_v2_support) {
+		if (value) {
+			tp_healthinfo_report(&ts->monitor_data_v2, HEALTH_REPORT, "data_record_on");
+		} else {
+			tp_healthinfo_report(&ts->monitor_data_v2, HEALTH_REPORT, "data_record_off");
+		}
+	}
+	mutex_unlock(&ts->mutex);
+	if (ts->int_mode == BANNABLE) {
+		enable_irq(ts->irq);
+	}
+	return count;
+}
+static int tp_data_record_read_func(struct seq_file *s, void *v)
+{
+	return 0;
+}
+static int data_record_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, tp_data_record_read_func, PDE_DATA(inode));
+}
+static const struct file_operations tp_data_record_proc_fops = {
+	.owner = THIS_MODULE,
+ 	.open  = data_record_open,
+	.read  = seq_read,
+	.write = tp_data_record_write_func,
+	.release = single_release,
 };
 
 //proc/touchpanel/debug_info/abs_doze
@@ -6575,6 +6596,13 @@ static int init_debug_info_proc(struct touchpanel_data *ts)
         TPD_INFO("%s: Couldn't create proc entry, %d\n", __func__, __LINE__);
     }
 
+	if (ts->tp_data_record_support) {
+		prEntry_tmp = proc_create_data("data_record", 0666, prEntry_debug_info, &tp_data_record_proc_fops, ts);
+		if (prEntry_tmp == NULL) {
+			ret = -ENOMEM;
+			TPD_INFO("%s: Couldn't create proc entry, %d\n", __func__, __LINE__);
+		}
+	}
     // show baseline data interface
     prEntry_tmp = proc_create_data("baseline", 0666, prEntry_debug_info, &tp_baseline_data_proc_fops, ts);
     if (prEntry_tmp == NULL) {

@@ -11,7 +11,6 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/qcom_scm.h>
 #include <linux/version.h>
 #include <linux/proc_fs.h>
 #include <linux/init.h>
@@ -19,6 +18,11 @@
 #include <linux/input/qpnp-power-on.h>
 #include <linux/printk.h>
 #include <linux/pm.h>
+#if LINUX_VERSION_CODE > KERNEL_VERSION(6, 6, 0)
+	#include <linux/firmware/qcom/qcom_scm.h>
+#else
+	#include <linux/qcom_scm.h>
+#endif
 
 
 static struct proc_dir_entry *oplus_ke_proc_dir;

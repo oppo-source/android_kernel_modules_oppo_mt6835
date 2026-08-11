@@ -1205,10 +1205,10 @@ int tp_raw_touch_healthinfo_handle(struct monitor_data *monitor_data,
 		if (is_point_reporting(obj_attention, points, i)) {
 			/*edge corner judge*/
 			if (monitor_data->kernel_grip_support)  {
-				if ((points[i].x < 2 * monitor_data->max_x / monitor_data->tx_num
-						   || points[i].x > (monitor_data->tx_num - 2) * monitor_data->max_x / monitor_data->tx_num)
-						   && (points[i].y < 2 * monitor_data->max_y / monitor_data->rx_num
-						   || points[i].y > (monitor_data->rx_num - 2) * monitor_data->max_y / monitor_data->rx_num)) {
+				if ((points[i].x < 1 * monitor_data->max_x / monitor_data->tx_num
+						   || points[i].x > (monitor_data->tx_num - 1) * monitor_data->max_x / monitor_data->tx_num)
+						   && (points[i].y < 1 * monitor_data->max_y / monitor_data->rx_num
+						   || points[i].y > (monitor_data->rx_num - 1) * monitor_data->max_y / monitor_data->rx_num)) {
 					if ((!points[i].rx_press && !points[i].rx_er) || (!points[i].tx_press && !points[i].tx_er)) {
 						monitor_data->corner_trx_ewr_zero_count++;
 						TPD_DETAIL("Touchpanel id %d :Raw Down[%4d %4d %4d %4d %4d %4d %4d](corner tx-rx-ewr ALL zero error)\n",

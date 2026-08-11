@@ -5206,7 +5206,7 @@ static  void syna_reserve_read(struct seq_file *s, void *chip_data)
 	return;
 }
 
-static void syna_tp_limit_data_write(void *chip_data, int count)
+static void syna_tp_data_record_write(void *chip_data, int count)
 {
 	int retval;
 	struct syna_tcm_data *tcm_info = (struct syna_tcm_data *)chip_data;
@@ -5240,7 +5240,7 @@ static struct debug_info_proc_operations syna_debug_proc_ops = {
 	.main_register_read = syna_main_register,
 	.limit_read	= synaptics_limit_read,
 	.reserve_read  = syna_reserve_read,
-	.tp_limit_data_write = syna_tp_limit_data_write,
+	.tp_data_record_write = syna_tp_data_record_write,
 };
 
 static int syna_device_report_touch(struct syna_tcm_data *tcm_info)

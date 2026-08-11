@@ -17,6 +17,7 @@
 #include <linux/device.h>
 #include <linux/kdev_t.h>
 #include <linux/major.h>
+#include <linux/version.h>
 
 #include "kernelFwUpdate.h"
 
@@ -49,7 +50,9 @@ static const struct attribute_group fw_update_attr_group = {
 
 static struct class kernel_fw_update_class = {
     .name =      "kernel_fw_update",
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
     .owner =     THIS_MODULE,
+#endif
 };
 
 static void fw_update_uevent_env(const char *name)

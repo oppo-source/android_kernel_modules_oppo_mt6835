@@ -456,8 +456,7 @@ static int fts_special_operation_for_samsung(struct chip_data_ft3518 *ts_data)
 		ret = fts_test_write_reg(FTS_REG_SAMSUNG_SPECIFAL, 0x01);
 
 		if (ret < 0) {
-			FTS_TEST_SAVE_ERR("write FTS_REG_SAMSUNG_SPECIFAL fail at %s,ret=%d\n", ret,
-					  __func__);
+			FTS_TEST_SAVE_ERR("write FTS_REG_SAMSUNG_SPECIFAL fail at %s,ret=%d\n", __func__, ret);
 			return -EIO;
 		}
 	}

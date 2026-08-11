@@ -32,7 +32,7 @@
 #define POINT_DATA_CHECKSUM_LEN 65
 #define NVT_TOUCH_ESD_CHECK_PERIOD (2000)
 #define NVT_ID_BYTE_MAX 6
-#define POINT_DATA_LEN 120
+#define POINT_DATA_LEN 296    /* coord 120bytes + dummy 136bytes (aligned 256byes) + edge reject 40bytes */
 #define SIZE_4KB 4096
 #define FLASH_SECTOR_SIZE SIZE_4KB
 /*#define FW_BIN_VER_OFFSET (fw_need_write_size - SIZE_4KB)*/
@@ -65,6 +65,7 @@
 #define DOUSWIP_DETECT                  34
 #define PEN_DETECT                      25
 
+#define EVENTBUFFER_INJECT_WDT_RESET     0x24       /*inject watchdog reset*/
 #define EVENTBUFFER_PWR_PLUG_IN          0x53
 #define EVENTBUFFER_PWR_PLUG_OUT         0x51
 #define EVENTBUFFER_HOPPING_POLLING_ON   0x73
@@ -103,6 +104,10 @@
 #define EVENTBUFFER_EXT_PEN_VIBRATOR_ON           0x16
 #define EVENTBUFFER_EXT_PEN_VIBRATOR_OFF          0x17
 #define EVENTBUFFER_EXT_PEN_MODE_5TH_ON           0x18       /* notify maxeye-3RD pencil connected */
+#define EVENTBUFFER_EXT_NOTIFY_KEYBOARD_OPEN      0x26       /*notify keyboard open event during screenOn*/
+#define EVENTBUFFER_EXT_PEN_JITTER_LEVEL          0x25
+#define EVENTBUFFER_EXT_TOUCH_LEAVE_JITTER        0X29
+#define EVENTBUFFER_EXT_SET_PACKAGE_TYPE          0x2A
 #define PEN_CTL_FEEDBACK                          0xffff
 
 #define NVT_TOUCH_FW_DEBUG_INFO (1)
@@ -186,6 +191,14 @@ typedef enum {
 	EVENT_MAP_FWINFO                        = 0x78,
 	EVENT_MAP_PROJECTID                     = 0x9A,
 } SPI_EVENT_MAP;
+
+/* com.tencent.tmgp.sgame */
+#define TENCENT_TMGP 10
+#define TENCENT_TMGP_MAP 4
+#define GAME_AIUNIT_CMD 0xBD
+#define PHYSICAL_ORIGIN_LEFT 0
+#define PHYSICAL_ORIGIN_RIGHT 1
+#define MAX_CMD_LEN 9
 
 typedef enum {
 	RESET_STATE_INIT = 0xA0,/* IC reset          */
@@ -413,6 +426,19 @@ struct chip_data_nt36523 {
 	bool noise_sta;
 	int water_sta;
 #endif /*end of CONFIG_OPLUS_TP_APK*/
+
+	/*health report*/
+	bool water_mode;
+	bool frequency_hopping;
+	bool frequent_frequency_hopping;
+	bool base_negative_finger;
+	bool baseline_err;
+	bool base_rxabs_baseline;
+	bool shield_palm;
+	bool health_esd;
+	bool bending_mode;
+	bool poor_gnd;
+	bool er_prevent;
 
 	struct nvt_autotest_para *p_nvt_test_para;
 	struct nvt_autotest_offset *p_nvt_autotest_offset;

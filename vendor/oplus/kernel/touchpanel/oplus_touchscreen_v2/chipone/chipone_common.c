@@ -24,7 +24,7 @@ static int cts_before_autotest(struct seq_file *s, struct touchpanel_data *ts,
 	TPD_INFO("@@ magic1 num: 0x%x\n", test_head->magic1);
 	TPD_INFO("@@ magic2 num: 0x%x\n", test_head->magic2);
 	TPD_INFO("@@ test item: 0x%llx\n", test_head->test_item);
-	
+
 	TPD_INFO("current test item: %llx\n", test_head->test_item);
 	p_cts_testdata->tx_num = ts->hw_res.tx_num;
 	p_cts_testdata->rx_num = ts->hw_res.rx_num;
@@ -198,7 +198,7 @@ END:
 		   error_count ? "" : "All test passed.");
 	TPD_INFO(" TP auto test %d error(s). %s\n", error_count,
 		 error_count ? "" : "All test passed.");
-	
+
 	TPD_INFO("%s - \n", __func__);
 	return error_count;
 }
@@ -212,7 +212,7 @@ static int cts_before_black_screen_autotest(struct seq_file *s,
 	uint32_t *p_data32 = NULL;
 
 	TPD_INFO("%s + \n", __func__);
-	
+
 	fw = ts->com_test_data.limit_fw;
 
 	test_head = (struct auto_test_header *)fw->data;
@@ -234,9 +234,9 @@ static int cts_before_black_screen_autotest(struct seq_file *s,
 	p_cts_testdata->pos = &ts->com_test_data.bs_result_cur_len;
 	p_cts_testdata->fw = fw;
 	p_cts_testdata->test_item = test_head->test_item;
-	
+
 	TPD_INFO("%s - \n", __func__);
-	
+
 	return 0;
 }
 
@@ -250,7 +250,7 @@ static int cts_doing_black_screen_autotest(struct seq_file *s,
 	struct com_test_data *com_test_data_p = NULL;
 
 	TPD_INFO("%s + \n", __func__);
-	
+
 	com_test_data_p = &ts->com_test_data;
 
 	if (!com_test_data_p || !com_test_data_p->chip_test_ops) {
@@ -359,7 +359,7 @@ int cts_black_screen_autotest(struct black_gesture_test *p,
 	int ret = 0;
 
 	TPD_INFO("%s + \n", __func__);
-	
+
 	ret = cts_before_black_screen_autotest(NULL, ts, &cts_testdata);
 
 	if (ret) {
@@ -375,7 +375,7 @@ end:
 	TPD_INFO("%d errors. %s", error_count, buf);
 	TPD_INFO(" TP auto test %d error(s). %s\n", error_count,
 		 error_count ? "" : "All test passed.");
-	
+
 	TPD_INFO("%s - \n", __func__);
 	return error_count;
 }

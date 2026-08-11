@@ -893,21 +893,6 @@ static struct kobj_attribute kobj_attr_gesture_coordinate =
 	__ATTR(gesture_coordinate, 0444, syna_sysfs_gesture_coordinate_show, NULL);
 
 
-static void touch_call_notifier_fp(struct fp_underscreen_info *fp_info)
-{
-	struct touchpanel_event event_data;
-
-	memset(&event_data, 0, sizeof(struct touchpanel_event));
-
-	event_data.touch_state = fp_info->touch_state;
-	event_data.area_rate = fp_info->area_rate;
-	event_data.x = fp_info->x;
-	event_data.y = fp_info->y;
-
-	touchpanel_event_call_notifier(EVENT_ACTION_FOR_FINGPRINT,
-		   (void *)&event_data);
-}
-
 /**
  * fingerprint_trigger()
  *
@@ -948,13 +933,15 @@ static ssize_t syna_sysfs_fingerprint_trigger_store(struct kobject *kobj,
 			tcm->fp_info.y = y_pos;
 			tcm->fp_info.touch_state = 1;
 			tcm->is_fp_down = true;
-			touch_call_notifier_fp(&tcm->fp_info);
+			touch_call_notifier_fp(tcm, &tcm->fp_info);
 			LOGE("screen on fingerprint down : (%d, %d)\n", tcm->fp_info.x, tcm->fp_info.y);
+			tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "screen_on_fp_down");
 		} else {
 			tcm->fp_info.touch_state = 0;
 			tcm->is_fp_down = false;
-			touch_call_notifier_fp(&tcm->fp_info);
+			touch_call_notifier_fp(tcm, &tcm->fp_info);
 			LOGE("screen on fingerprint up : (%d, %d)\n", tcm->fp_info.x, tcm->fp_info.y);
+			tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "screen_on_fp_up");
 		}
 	} else {
 		LOGE("invalid content: '%s', length = %zd\n", buf, count);
@@ -1816,6 +1803,9 @@ static int syna_cdev_ioctl_send_message(struct syna_tcm *tcm,
 	unsigned int payload_length = 0;
 	unsigned int delay_ms_resp = RESP_IN_POLLING;
 	struct tcm_buffer resp_data_buf;
+	bool cmd_under_water = false;
+	unsigned short config = 0;
+	int ret = 0;
 
 	if (!tcm->is_connected) {
 		LOGE("Not connected\n");
@@ -1890,8 +1880,8 @@ retry:
 	}
 
 	payload_length = syna_pal_le2_to_uint(&data[1]);
-	LOGE("Command = 0x%02x, payload length = %d\n",
-		data[0], payload_length);
+	LOGE("Command = 0x%02x, payload length = %d data:%*ph\n",
+		data[0], payload_length, payload_length, &data[3]);
 
 	if (g_sysfs_io_polling_interval == RESP_IN_ATTN)
 		delay_ms_resp = RESP_IN_ATTN;
@@ -1909,7 +1899,21 @@ retry:
 			syna_dev_update_lpwg_status(tcm);
 			syna_sysfs_set_fingerprint_prepare(tcm);
 			LOGE("HBP set touch_and_hold(0x%04x)\n", tcm->touch_and_hold);
+			if (tcm->touch_and_hold) {
+				tcm->is_fp_down = false;
+			}
+		} else if (data[3] == DC_UNDER_WATER_DETECT) {
+			tcm->under_water_detect = (unsigned short)syna_pal_le2_to_uint(&data[4]);
+			LOGE("HBP set under_water_detect(0x%04x)\n", tcm->under_water_detect);
+			tcm->under_water_detect = (tcm->under_water_detect >> UNDER_WATER_BIT) & 0x1;
+			syna_dev_update_lpwg_status(tcm);
+			syna_sysfs_set_fingerprint_prepare(tcm);
 		}
+	}
+
+	if ((data[0] == CMD_GET_DYNAMIC_CONFIG) && (data[3] == DC_UNDER_WATER_DETECT)) {
+		syna_sysfs_set_fingerprint_prepare(tcm);
+		cmd_under_water = true;
 	}
 
 	retval = syna_tcm_send_command(tcm->tcm_dev,
@@ -1927,8 +1931,34 @@ retry:
 		 */
 	}
 
-	if ((data[0] == CMD_SET_DYNAMIC_CONFIG) && (payload_length == 3)) {
-		if ((data[3] == DC_GESTURE_TYPE_ENABLE) || (data[3] == DC_TOUCH_AND_HOLD)) {
+	if (data[3] == DC_TOUCH_AND_HOLD) {
+		for (retryCnt = 5; retryCnt > 0; retryCnt--) {
+			ret = syna_tcm_get_dynamic_config(tcm->tcm_dev, DC_TOUCH_AND_HOLD, &config, 0);
+			if (ret < 0 || config != tcm->touch_and_hold) {
+				if (ret < 0) {
+					LOGI("TOUCH_AND_HOLD : error, retry again, ret = %d\n",ret);
+				} else {
+					LOGI("TOUCH_AND_HOLD : %d\n", config);
+				}
+				retval = syna_tcm_send_command(tcm->tcm_dev,
+						data[0],
+						&data[3],
+						payload_length,
+						&resp_code,
+						&resp_data_buf,
+						delay_ms_resp);
+				if (retval < 0) {
+					LOGE("Fail to run command 0x%02x with payload len %d\n",
+						data[0], payload_length);
+				}
+			} else {
+				break;
+			}
+		}
+	}
+
+	if (((data[0] == CMD_SET_DYNAMIC_CONFIG) && (payload_length == 3)) || (cmd_under_water == true)) {
+		if ((data[3] == DC_GESTURE_TYPE_ENABLE) || (data[3] == DC_TOUCH_AND_HOLD) || (data[3] == DC_UNDER_WATER_DETECT)) {
 			if (!tcm->fp_active || tcm->fp_prevent) {
 				syna_pal_sleep_ms(50);
 				syna_sysfs_set_fingerprint_post(tcm);
@@ -3196,7 +3226,7 @@ static int syna_cdev_open(struct inode *inp, struct file *filp)
 #endif
 	syna_pal_mutex_unlock(&tcm->extif_mutex);
 
-	LOGE("cdev open\n");
+	LOGE("cdev open, char_dev_ref_count:%d\n", tcm->char_dev_ref_count);
 
 	return 0;
 }
@@ -3234,6 +3264,8 @@ static int syna_cdev_release(struct inode *inp, struct file *filp)
 	IF_ARG_NULL_OUT(p_dev);
 	tcm = dev_get_drvdata(p_dev);
 	IF_ARG_NULL_OUT(tcm);
+
+	tcm->proc_pid = 0;
 
 	mutex_lock(&tcm->mutex);
 	syna_pal_mutex_lock(&tcm->extif_mutex);
@@ -3273,7 +3305,7 @@ static int syna_cdev_release(struct inode *inp, struct file *filp)
 
 	g_sysfs_extra_bytes_read = 0;
 
-	LOGE("cdev close\n");
+	LOGE("cdev close, char_dev_ref_count:%d\n", tcm->char_dev_ref_count);
 	return 0;
 }
 
@@ -3582,7 +3614,11 @@ exit:
  * @return
  *    the string of devtmpfs
  */
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static char *syna_cdev_devnode(const struct device *dev, umode_t *mode)
+#else
 static char *syna_cdev_devnode(struct device *dev, umode_t *mode)
+#endif
 {
 	if (!mode)
 		return NULL;
@@ -3650,8 +3686,11 @@ int syna_cdev_create_sysfs(struct syna_tcm *tcm,
 		LOGE("Fail to add cdev_add\n");
 		goto err_add_chardev;
 	}
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 	device_class = class_create(THIS_MODULE, PLATFORM_DRIVER_NAME);
+#else
+	device_class = class_create(PLATFORM_DRIVER_NAME);
+#endif
 	if (IS_ERR(device_class)) {
 		LOGE("Fail to create device class\n");
 		retval = PTR_ERR(device_class);
@@ -3727,8 +3766,6 @@ void syna_cdev_remove_sysfs(struct syna_tcm *tcm)
 	syna_sysfs_remove_dir(tcm);
 
 	syna_pal_mem_set(tcm->report_to_queue, 0, REPORT_TYPES);
-	syna_cdev_clean_queue(tcm);
-	syna_pal_mutex_free(&g_fifo_queue_mutex);
 
 	tcm->char_dev_ref_count = 0;
 	tcm->proc_pid = 0;
@@ -3740,13 +3777,6 @@ void syna_cdev_remove_sysfs(struct syna_tcm *tcm)
 		unregister_chrdev_region(tcm->char_dev_num, 1);
 	}
 
-	syna_tcm_buf_release(&g_cdev_cbuf);
-
-	syna_pal_mutex_free(&tcm->extif_mutex);
-
-	tcm->device_class = NULL;
-
-	tcm->device = NULL;
 	g_sysfs_has_remove = 1;
 }
 

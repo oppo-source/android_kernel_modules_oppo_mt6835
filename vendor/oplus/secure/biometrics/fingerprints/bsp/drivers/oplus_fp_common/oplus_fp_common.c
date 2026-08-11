@@ -381,7 +381,12 @@ void read_lcd_type_proc_data(void) {
     if (strstr(saved_command_line, "boe_")){
         strncpy(lcd_manu, "boe", FP_ID_MAX_LENGTH - 1);
     }else if(strstr(saved_command_line, "samsung_")){
-        strncpy(lcd_manu, "samsung", FP_ID_MAX_LENGTH - 1);
+        if (strstr(saved_command_line, "samsung_amb655xl08_1080_2400_cmd_2") ||
+            strstr(saved_command_line, "samsung_amb655xl08_1080_2400_cmd_dvt_2")) { // just for SM8250 Jin/Hima
+            strncpy(lcd_manu, "samsung2", FP_ID_MAX_LENGTH - 1);
+        } else {
+            strncpy(lcd_manu, "samsung", FP_ID_MAX_LENGTH - 1);
+        }
     } else if (strstr(saved_command_line, "tianma_")) {
         strncpy(lcd_manu, "tm", FP_ID_MAX_LENGTH - 1);
     }else {

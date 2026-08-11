@@ -70,8 +70,10 @@
 #define FTS_CMD_START                       0x55
 #define FTS_CMD_START_DELAY                 12
 #define FTS_CMD_READ_ID                     0x90
+#define FT3681_REG_FOD_ERROR_INFO           (0xE0)
+#define FT3681_REG_FOD_ERROR_INFO_LEN       (14)
 #define FT3681_REG_FOD_INFO                 (0xE1)
-#define FT3681_REG_FOD_INFO_LEN             (9)
+#define FT3681_REG_FOD_INFO_LEN             (10)
 #define FT3681_REG_AOD_INFO                 (0xD3)
 #define FT3681_REG_AOD_INFO_LEN             (6)
 
@@ -128,6 +130,7 @@ struct fts_core {
 * Global variable or extern global variabls/functions
 *****************************************************************************/
 enum gesture_id {
+	GESTURE_FINGER_PRINT_ERROR = 0x16,
 	GESTURE_RIGHT2LEFT_SWIP = 0x20,
 	GESTURE_LEFT2RIGHT_SWIP = 0x21,
 	GESTURE_DOWN2UP_SWIP = 0x22,
@@ -155,6 +158,7 @@ struct fod_info {
 	int fp_x;
 	int fp_y;
 	int fp_area_rate;
+	int fp_time;
 };
 
 struct aod_info {
@@ -192,6 +196,16 @@ enum _FTS_RST_REASON {
 	FTS_RST_REASON_WDT      = 0x02,
 	FTS_RST_REASON_EXTERNAL = 0x04,
 	FTS_RST_REASON_PWR      = 0x08,
+	FTS_GESTURE_DIFF		= 0x80,
+};
+
+
+enum _FTS_FP_ERROR_TYPE {
+	FTS_FINGERPRINT_DOWN_BEFORE_FP_ENABLE = 0,
+	FTS_FINGERPRINT_X_Y_NOT_MATCH = 0x02,
+	FTS_ANOTHER_FINGER_ON_NON_FP_ZONE = 0x04,
+	FTS_FINGERPRINT_AREA_NOT_MATCH = 0x10,
+	FTS_FINGERPRINT_OUT_MOVE_IN = 0x40,
 };
 
 /* communication interface */

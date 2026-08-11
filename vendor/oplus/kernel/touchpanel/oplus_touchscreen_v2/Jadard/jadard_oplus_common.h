@@ -3,7 +3,7 @@
 
 #include "./jd9365tg/jadard_common.h"
 #include "./jd9365tg/jadard_module.h"
-
+#define ERR_ALLOC_MEM(X)               ((IS_ERR(X) || X == NULL) ? 1 : 0)
 void jadard_baseline_read(struct seq_file *s, void *chip_data);
 void jadard_delta_read(struct seq_file *s, void *chip_data);
 void jadard_main_register_read(struct seq_file *s, void *chip_data);

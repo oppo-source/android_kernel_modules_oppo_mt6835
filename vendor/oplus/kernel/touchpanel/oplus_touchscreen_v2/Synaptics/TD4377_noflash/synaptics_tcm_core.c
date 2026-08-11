@@ -29,7 +29,6 @@
 #define RESPONSE_TIMEOUT_MS_SHORT 300
 #define RESPONSE_TIMEOUT_MS_DEFAULT 1000
 #define RESPONSE_TIMEOUT_MS_LONG 3000
-#define RESPONSE_TIMEOUT_MS_LONG_PT17_PT18 5000
 
 #define ERASE_FLASH_DELAY_MS 5000
 #define WRITE_FLASH_DELAY_MS 200
@@ -52,10 +51,7 @@ static int syna_tcm_write_message(struct syna_tcm_hcd *tcm_hcd,
 				  unsigned int polling_delay_ms);
 static void syna_tcm_test_report(struct syna_tcm_hcd *tcm_hcd);
 
-int syna_tp_irq_control(void *chip_data, bool enable, int mode);
 struct syna_tcm_hcd *g_tcm_hcd = NULL;
-
-int gesture_fw_flage = 0;
 
 #if defined(CONFIG_SPI_MT65XX)
 static const struct mtk_chip_config spi_ctrdata = {
@@ -840,19 +836,6 @@ static int syna_parse_report(struct syna_tcm_hcd *tcm_hcd)
 			touch_data->palm_status = data;
 			offset += bits;
 			break;
-		case TOUCH_GET_WATER_MODE:
-			bits = config_data[idx++];
-			retval = syna_get_report_data(tcm_hcd, offset, bits, &data);
-			if (retval < 0) {
-				if (tcm_hcd->health_monitor_support) {
-					tp_healthinfo_report(tcm_hcd->monitor_data, HEALTH_REPORT, "parse_report_err_nsmstate");
-				}
-				TPD_INFO("Failed to get NSM state\n");
-				return retval;
-			}
-			touch_data->water_mode = data;
-			offset += bits;
-			break;
 		case TOUCH_REPORT_GLOVE_DETECTED:
 			bits = config_data[idx++];
 			retval = syna_get_report_data(tcm_hcd, offset, bits, &data);
@@ -864,6 +847,19 @@ static int syna_parse_report(struct syna_tcm_hcd *tcm_hcd)
 				return retval;
 			}
 			touch_data->glove_status = data;
+			offset += bits;
+			break;
+		case TOUCH_GET_WATER_MODE:
+			bits = config_data[idx++];
+			retval = syna_get_report_data(tcm_hcd, offset, bits, &data);
+			if (retval < 0) {
+				if (tcm_hcd->health_monitor_support) {
+					tp_healthinfo_report(tcm_hcd->monitor_data, HEALTH_REPORT, "parse_report_err_nsmstate");
+				}
+				TPD_INFO("Failed to get NSM state\n");
+				return retval;
+			}
+			touch_data->water_mode = data;
 			offset += bits;
 			break;
 		case TOUCH_NUM_OF_ACTIVE_OBJECTS:
@@ -1018,6 +1014,7 @@ static int syna_set_normal_report_config(struct syna_tcm_hcd *tcm_hcd)
 	unsigned int length;
 	struct touch_hcd *touch_hcd = tcm_hcd->touch_hcd;
 	struct touchpanel_data *ts = spi_get_drvdata(tcm_hcd->s_client);
+
 	TPD_INFO("%s:set normal report\n", __func__);
 	length = le2_to_uint(tcm_hcd->app_info.max_touch_report_config_size);
 
@@ -1102,7 +1099,6 @@ static int syna_set_gesture_report_config(struct syna_tcm_hcd *tcm_hcd)
 	unsigned int length;
 	struct touch_hcd *touch_hcd = tcm_hcd->touch_hcd;
 	struct touchpanel_data *ts = spi_get_drvdata(tcm_hcd->s_client);
-
 	TPD_DEBUG("%s: set gesture report\n", __func__);
 	length = le2_to_uint(tcm_hcd->app_info.max_touch_report_config_size);
 
@@ -1139,11 +1135,11 @@ static int syna_set_gesture_report_config(struct syna_tcm_hcd *tcm_hcd)
 	touch_hcd->out.buf[idx++] = TOUCH_REPORT_GESTURE_VEE;
 	touch_hcd->out.buf[idx++] = 1;
 	touch_hcd->out.buf[idx++] = TOUCH_REPORT_GESTURE_TRIANGLE;
-	touch_hcd->out.buf[idx++] = 1;
-	if (ts->aod_gesture_support) {
-		touch_hcd->out.buf[idx++] = TOUCH_GESTURE_SINGLE_TAP;
+	if (ts->incell_aod_gesture_support) {
 		touch_hcd->out.buf[idx++] = 1;
+		touch_hcd->out.buf[idx++] = TOUCH_GESTURE_SINGLE_TAP;
 	}
+	touch_hcd->out.buf[idx++] = 1;
 	touch_hcd->out.buf[idx++] = TOUCH_PAD_TO_NEXT_BYTE;
 	touch_hcd->out.buf[idx++] = TOUCH_REPORT_GESTURE_INFO;
 	touch_hcd->out.buf[idx++] = 16;
@@ -1246,7 +1242,7 @@ static void syna_set_trigger_reason(struct syna_tcm_hcd *tcm_hcd, irq_reason tri
 	SET_BIT(tcm_hcd->trigger_reason, trigger_reason);
 }
 
-static void syna_tcm_resize_chunk_size(struct syna_tcm_hcd *tcm_hcd)
+/*static void syna_tcm_resize_chunk_size(struct syna_tcm_hcd *tcm_hcd)
 {
 	unsigned int max_write_size;
 
@@ -1255,7 +1251,7 @@ static void syna_tcm_resize_chunk_size(struct syna_tcm_hcd *tcm_hcd)
 	if (tcm_hcd->wr_chunk_size == 0) {
 		tcm_hcd->wr_chunk_size = max_write_size;
 	}
-}
+}*/
 
 /**
  * syna_tcm_dispatch_report() - dispatch report received from device
@@ -1297,13 +1293,13 @@ static void syna_tcm_dispatch_report(struct syna_tcm_hcd *tcm_hcd)
 				touch_data->palm_status = PALM_TO_DEFAULT;
 			}
 			if (touch_data->glove_status == GLOVE_TO_TRIGGER && touch_data->glove_flag == 0) {
-				TPD_INFO("Enter glove_mode\n");
+				TPD_INFO("enter glove_mode = 1\n");
 				touch_data->glove_flag = 1;
 				tp_healthinfo_report(tcm_hcd->monitor_data, HEALTH_GLOVE, &touch_data->glove_flag);
 			}
 
 			if (touch_data->glove_status == GLOVE_TO_HAND && touch_data->glove_flag == 1) {
-				TPD_INFO("Quit glove_mode\n");
+				TPD_INFO("quit glove_mode = 0\n");
 				touch_data->glove_flag = 0;
 				tp_healthinfo_report(tcm_hcd->monitor_data, HEALTH_GLOVE, &touch_data->glove_flag);
 			}
@@ -1337,6 +1333,7 @@ static void syna_tcm_dispatch_report(struct syna_tcm_hcd *tcm_hcd)
 		TPD_INFO("syna_tcm_test_report\n");
 	}
 	TPD_DEBUG("%s: glove_mode =%d\n", __func__, touch_data->glove_status);
+
 exit:
 	UNLOCK_BUFFER(tcm_hcd->report.buffer);
 	UNLOCK_BUFFER(tcm_hcd->in);
@@ -1448,7 +1445,7 @@ static void syna_tcm_dispatch_message(struct syna_tcm_hcd *tcm_hcd)
 
 		UNLOCK_BUFFER(tcm_hcd->in);
 
-		syna_tcm_resize_chunk_size(tcm_hcd);
+		/*syna_tcm_resize_chunk_size(tcm_hcd);*/
 
 		TPD_DETAIL("Received identify report (firmware mode = 0x%02x)\n",
 			   tcm_hcd->id_info.mode);
@@ -1783,6 +1780,10 @@ static int syna_tcm_raw_write(struct syna_tcm_hcd *tcm_hcd,
 	unsigned int chunk_space;
 	unsigned int xfer_length;
 	unsigned int remaining_length;
+
+	if (length == 0) {
+		return 0;
+	}
 
 	remaining_length = length;
 
@@ -2340,8 +2341,8 @@ static int syna_tcm_write_message_zeroflash(struct syna_tcm_hcd *tcm_hcd,
 	} else {
 		chunk_space = tcm_hcd->wr_chunk_size - 1;
 	}
-	if (command == CMD_ROMBOOT_DOWNLOAD) {
-		chunk_space = remaining_length;
+	if (command == CMD_DOWNLOAD_CONFIG) {
+		chunk_space = WR_CHUNK_LENGHT;
 	}
 
 	chunks = ceil_div(remaining_length, chunk_space);
@@ -2425,7 +2426,7 @@ static int syna_tcm_write_message_zeroflash(struct syna_tcm_hcd *tcm_hcd,
 	mutex_unlock(&tcm_hcd->rw_ctrl_mutex);
 
 
-	if (tcm_hcd->tp_irq_state) {
+	if (!tcm_hcd->esd_irq_disabled) {
 		retval = wait_for_completion_timeout(&response_complete,
 						     msecs_to_jiffies(RESPONSE_TIMEOUT_MS));
 	} else {
@@ -2619,7 +2620,7 @@ static int syna_tcm_identify(struct syna_tcm_hcd *tcm_hcd, bool id)
 		goto exit;
 	}
 
-	syna_tcm_resize_chunk_size(tcm_hcd);
+	/*syna_tcm_resize_chunk_size(tcm_hcd);*/
 
 get_info:
 	if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
@@ -3015,6 +3016,7 @@ static int syna_tcm_sw_reset(struct syna_tcm_hcd *tcm_hcd)
 
 static int syna_tcm_before_switch_to_gesture_mode(struct syna_tcm_hcd *tcm_hcd, bool enable)
 {
+
 	if (enable) {
 		/*set gesture fw mode flag = 1*/
 		tcm_hcd->request_fw_image_id = 1;
@@ -3026,29 +3028,6 @@ static int syna_tcm_before_switch_to_gesture_mode(struct syna_tcm_hcd *tcm_hcd, 
 		tp_wait_hdl_finished();
 
 		tcm_hcd->request_fw_image_id = 0;
-	}
-	return 0;
-}
-
-static int syna_tcm_before_switch_to_aod_gesture_mode(struct syna_tcm_hcd *tcm_hcd, bool enable)
-{
-	if (enable) {
-		/*set gesture fw mode flag = 1*/
-		tcm_hcd->request_fw_image_id = 1;
-		/*sw reset*/
-		syna_tcm_sw_reset(tcm_hcd);
-
-		msleep(50);
-		/*wait hostdownload done*/
-		tp_wait_hdl_finished();
-
-		tcm_hcd->request_fw_image_id = 0;
-	} else {
-		syna_tcm_sw_reset(tcm_hcd);
-
-		msleep(50);
-		/*wait hostdownload done*/
-		tp_wait_hdl_finished();
 	}
 
 	return 0;
@@ -3060,16 +3039,9 @@ static int syna_tcm_set_gesture_mode(struct syna_tcm_hcd *tcm_hcd, bool enable)
 	unsigned short config;
 	struct touchpanel_data *ts = spi_get_drvdata(tcm_hcd->s_client);
 
-	TPD_INFO("%s:gesture_fw_flage=%d.\n", __func__, gesture_fw_flage);
-	if (ts->lpwg_fw_support && (gesture_fw_flage == 0)) {
+	if (ts->lpwg_fw_support) {
 		/*request lpwg firmware*/
 		syna_tcm_before_switch_to_gesture_mode(tcm_hcd, enable);
-		gesture_fw_flage = 1;
-	}
-
-	if(!tcm_hcd->tp_irq_state) {
-		TPD_INFO("%s:tp irq disabled,skip.\n", __func__);
-		return retval;
 	}
 
 	/*this command may take too much time, if needed can add flag to skip this */
@@ -3094,10 +3066,10 @@ static int syna_tcm_set_gesture_mode(struct syna_tcm_hcd *tcm_hcd, bool enable)
 				TPD_INFO("Failed to set dynamic gesture config\n");
 				return retval;
 			}
-			if (ts->aod_gesture_support) {
+			if (ts->incell_aod_gesture_support) {
 				retval = syna_tcm_set_dynamic_config(tcm_hcd,
- 						     DC_GESTURE_MASK,
-						     0xFFFF);
+								DC_GESTURE_MASK,
+								0xFFFF);
 				if (retval < 0) {
 					TPD_INFO("%s: Failed to set dynamic gesture mask config\n", __func__);
 					return retval;
@@ -3122,16 +3094,6 @@ static int syna_tcm_set_aod_mode(struct syna_tcm_hcd *tcm_hcd, bool enable)
 	int retval = 0;
 	unsigned short config;
 
-	struct touchpanel_data *ts = spi_get_drvdata(tcm_hcd->s_client);
-	if (!ts) {
-		TPD_INFO("Failed to get touchpanel data\n");
-		return -ENODEV;
-	}
-
-	if (ts->lpwg_fw_support) {
-		/*request lpwg firmware*/
-		syna_tcm_before_switch_to_aod_gesture_mode(tcm_hcd, enable);
-	}
 
 	retval = syna_tcm_get_dynamic_config(tcm_hcd, DC_IN_WAKEUP_GESTURE_MODE, &config);
 	if (retval < 0) {
@@ -3140,6 +3102,7 @@ static int syna_tcm_set_aod_mode(struct syna_tcm_hcd *tcm_hcd, bool enable)
 	}
 
 	TPD_DEBUG("config id is %d, enable: %d\n", config, enable);
+	TPD_DEBUG("aod enable: %d\n", enable);
 
 	if (enable) {
 		if (!config) {
@@ -3376,30 +3339,6 @@ static int synaptics_enable_game_mode(struct syna_tcm_hcd *tcm_hcd, bool enable)
 
 	return ret;
 }
-
-static int synaptics_enable_waterproof_mode(struct syna_tcm_hcd *tcm_hcd, bool enable)
-{
-	int8_t ret = -1;
-
-	TPD_DEBUG("%s:enable = %d\n", __func__, enable);
-
-	if (enable) {
-		ret = syna_tcm_set_dynamic_config(tcm_hcd, DC_WATERPROOF_ENABLE, 0);
-		if (ret < 0) {
-			TPD_INFO("%s:failed to enable waterproof mode\n", __func__);
-			return ret;
-		}
-	} else {
-		ret = syna_tcm_set_dynamic_config(tcm_hcd, DC_WATERPROOF_ENABLE, 1);
-		if (ret < 0) {
-			TPD_INFO("%s:failed to disable waterproof mode\n", __func__);
-			return ret;
-		}
-	}
-
-	return ret;
-}
-
 /* void tp_wait_hdl_finished(void); */
 
 static int syna_mode_switch(void *chip_data, work_mode mode, int flag)
@@ -3411,22 +3350,24 @@ static int syna_mode_switch(void *chip_data, work_mode mode, int flag)
 		TPD_INFO("tp irq disabled, skip switch mode.\n");
 		return 0;
 	}
-	if (!ts->is_suspended) {
-		if (ts->aod_gesture_support) {
-			if (ts->out_aod_flag || ts->in_aod_flag) {
-				TPD_INFO("enter aod mode switch\n");
-				atomic_set(&tcm_hcd->host_downloading, 0);
-				/*syna_tcm_hdl_done(tcm_hcd);*/
-				enable_irq(tcm_hcd->s_client->irq);
-				/*g_tcm_hcd->hdl_finished_flag = 1;*/
-				complete(&tcm_hcd->config_complete);
+	if (ts != NULL) {
+		if (ts->is_suspended == 0) {
+			if (ts->incell_aod_gesture_support) {
+				if (MODE_INCELL_AOD == mode) {
+					TPD_INFO("enter aod mode switch\n");
+					atomic_set(&tcm_hcd->host_downloading, 0);
+					/*syna_tcm_hdl_done(tcm_hcd);*/
+					enable_irq(tcm_hcd->s_client->irq);
+					/*g_tcm_hcd->hdl_finished_flag = 1;*/
+					complete(&tcm_hcd->config_complete);
+				}
 			}
+			msleep(100);
+			tp_wait_hdl_finished();
 		}
-		msleep(100);
-		tp_wait_hdl_finished();
-		gesture_fw_flage = 0;
 	}
-	TPD_INFO("syna_mode_switch begin, mode = %d; flag =%d\n", mode, flag);
+
+	TPD_INFO("syna_mode_switch begin, mode = %d\n", mode);
 	switch (mode) {
 	case MODE_NORMAL:
 		TPD_DETAIL("syna_mode_switch MODE_NORMAL\n");
@@ -3441,20 +3382,17 @@ static int syna_mode_switch(void *chip_data, work_mode mode, int flag)
 			TPD_INFO("%s:Failed to set gesture mode\n", __func__);
 		}
 		break;
-	case MODE_GLOVE:
-		if (!ts->is_suspended) {
-			TPD_INFO("%s: %s force glove_mode.\n", __func__, flag ? "1" : "0");
-			ret = syna_tcm_set_glove_mode(tcm_hcd, flag);
-			if (ret < 0) {
-				TPD_INFO("%s:Failed to set glove mode\n", __func__);
-			}
-		}
-		break;
-
-	case MODE_AOD:
+	case MODE_INCELL_AOD:
 		ret = syna_tcm_set_aod_mode(tcm_hcd, flag);
 		if (ret < 0) {
 			TPD_INFO("%s:Failed to set aod mode\n", __func__);
+		}
+		break;
+	case MODE_GLOVE:
+		TPD_INFO("%s: %s force glove_mode.\n", __func__, flag ? "1" : "0");
+		ret = syna_tcm_set_glove_mode(tcm_hcd, flag);
+		if (ret < 0) {
+			TPD_INFO("%s:Failed to set glove mode\n", __func__);
 		}
 		break;
 	case MODE_SLEEP:
@@ -3484,13 +3422,6 @@ static int syna_mode_switch(void *chip_data, work_mode mode, int flag)
 		}
 		break;
 
-	case MODE_WATERPROOF:
-		ret = synaptics_enable_waterproof_mode(tcm_hcd, flag);
-		if (ret < 0) {
-			TPD_INFO("%s: enable waterproof mode : %d failed\n", __func__, flag);
-		}
-		break;
-
 	case MODE_EDGE:
 		/*ret = syna_tcm_set_dynamic_config(tcm_hcd, DC_GRIP_SUPPRESSION_ENABLED, flag?1:0);
 		//if (ret < 0) {
@@ -3499,13 +3430,6 @@ static int syna_mode_switch(void *chip_data, work_mode mode, int flag)
 		ret = synaptics_enable_edge_limit(tcm_hcd, flag);
 		if (ret < 0) {
 			TPD_INFO("%s: synaptics enable edg limit failed.\n", __func__);
-		}
-		break;
-
-	case MODE_UNDERWATER:
-		ret = syna_tcm_set_dynamic_config(tcm_hcd, DC_UNDER_WATER, flag?1:0);
-		if (ret < 0) {
-			TPD_INFO("%s:failed to set under_water mode\n", __func__);
 		}
 		break;
 	default:
@@ -3533,19 +3457,12 @@ static int  syna_tcm_reinit_device(void *chip_data)
 
 static int syna_hw_reset(struct syna_tcm_hcd *tcm_hcd, struct hw_resource *hw_res)
 {
-	struct touchpanel_data *ts = spi_get_drvdata(tcm_hcd->s_client);
 	if (gpio_is_valid(hw_res->reset_gpio)) {
 		TPD_INFO("hardware reset: %d\n", hw_res->reset_gpio);
 		gpio_set_value(hw_res->reset_gpio, false);
-		if(ts->tcm_skip_time) {
-			msleep(10);
-			gpio_set_value(hw_res->reset_gpio, true);
-			TPD_INFO("TD4160  tcm_skip_time\n");
-		} else {
-			msleep(20);
-			gpio_set_value(hw_res->reset_gpio, true);
-			msleep(200);
-		}
+		msleep(20);
+		gpio_set_value(hw_res->reset_gpio, true);
+		msleep(200);
 		return 0;
 	}
 
@@ -3615,6 +3532,8 @@ void syna_fw_version_update(void *chip_data)
 	struct syna_tcm_hcd *tcm_hcd = (struct syna_tcm_hcd *)chip_data;
 	struct touchpanel_data *ts = spi_get_drvdata(tcm_hcd->s_client);
 	char *fw_ver = NULL;
+
+        tcm_hcd->app_info.customer_config_id[9] = '\0';
 
 	if (strlen(tcm_hcd->app_info.customer_config_id) == 0) {
 		return;
@@ -3690,7 +3609,7 @@ static fw_update_state copy_fw_to_buffer(struct syna_tcm_hcd *tcm_hcd, const str
 		TPD_INFO("failed to get oplus tp firmware.\n");
 		return FW_UPDATE_ERROR;
 	}
-	return FW_UPDATE_SUCCESS;
+	return FW_UPDATE_ERROR;
 
 exit:
 	if(tp_fw) {
@@ -3851,25 +3770,15 @@ static int testing_run_prod_test_item(struct syna_tcm_hcd *tcm_info,
 	test_hcd->test_out.buf[0] = test_code;
 
 	LOCK_BUFFER(test_hcd->test_resp);
-	if (tcm_info->pt17_pt18_test_support) {
-		retval = syna_tcm_write_message(tcm_info,
-						CMD_PRODUCTION_TEST,
-						test_hcd->test_out.buf,
-						1,
-						&test_hcd->test_resp.buf,
-						&test_hcd->test_resp.buf_size,
-						&test_hcd->test_resp.data_length,
-						RESPONSE_TIMEOUT_MS_LONG_PT17_PT18);
-	}  else {
-		retval = syna_tcm_write_message(tcm_info,
-						CMD_PRODUCTION_TEST,
-						test_hcd->test_out.buf,
-						1,
-						&test_hcd->test_resp.buf,
-						&test_hcd->test_resp.buf_size,
-						&test_hcd->test_resp.data_length,
-						RESPONSE_TIMEOUT_MS_LONG);
-	}
+	retval = syna_tcm_write_message(tcm_info,
+					CMD_PRODUCTION_TEST,
+					test_hcd->test_out.buf,
+					1,
+					&test_hcd->test_resp.buf,
+					&test_hcd->test_resp.buf_size,
+					&test_hcd->test_resp.data_length,
+					RESPONSE_TIMEOUT_MS_LONG);
+
 	if (retval < 0) {
 		TPD_INFO("Failed to write command %s\n", STR(CMD_PRODUCTION_TEST));
 		UNLOCK_BUFFER(test_hcd->test_resp);
@@ -4033,8 +3942,6 @@ static int synaptics_auto_test_preoperation(struct seq_file *s, void *chip_data,
 	char *postfix = "_TEST.img";
 	uint8_t copy_len = 0;
 
-	ts->lpwg_fw_support = false;
-
 	TPD_INFO("%s  is called\n", __func__);
 
 	fw_name_test = kzalloc(MAX_FW_NAME_LENGTH, GFP_KERNEL);
@@ -4094,8 +4001,6 @@ static int synaptics_auto_black_screen_test_endoperation(struct seq_file *s, voi
 	const struct firmware *fw = NULL;
 
 	TPD_INFO("%s  is called\n", __func__);
-
-	ts->lpwg_fw_support = true;
 
 	ret = request_firmware(&fw, ts->panel_data.fw_name, ts->dev);
 	if (!ret) {
@@ -4278,7 +4183,6 @@ static int syna_testing_pt11(struct seq_file *s, void *chip_data,
 
 	return error_count;
 }
-
 
 static int syna_get_test_max_adc_value(struct syna_tcm_hcd *tcm_hcd, unsigned short *value)
 {
@@ -5242,6 +5146,28 @@ static uint8_t synaptics_get_touch_direction(void *chip_data)
 	return tcm_hcd->touch_direction;
 }
 
+static void syna_getglove_mode_status(void *chip_data, int *enable, int *count)
+{
+	struct syna_tcm_hcd *tcm_hcd = (struct syna_tcm_hcd *)chip_data;
+	struct touch_hcd *touch_hcd = tcm_hcd->touch_hcd;
+	struct touch_data *touch_data = &touch_hcd->touch_data;
+	int retval = 0;
+	unsigned short config;
+
+	retval = syna_tcm_get_dynamic_config(tcm_hcd, DC_GLOVE_MODE_STATE, &config);
+	if (retval < 0) {
+		TPD_INFO("Failed to get dynamic DC_GLOVE_MODE_STATE  config\n");
+		return;
+	}
+	/*0x0F indicates the initial state;
+	0x00 indicates that stage 1 has been entered, and there is no glove on the detection state surface
+	0x01 indicates that stage 1 has been entered, and objects have been detected on the surface, but the conditions for stage 2 have not yet been met
+	0x02 indicates that the glove mode is entered, and it will not exit after raising your hand.*/
+	*enable = (config == 0x02 ? 1 : 0);
+	TPD_INFO("%s: config id is %d, enable: %d ,glove_status%d\n", __func__, config, *enable, touch_data->glove_status);
+	return;
+}
+
 static void syna_force_water_mode(void *chip_data, bool enable)
 {
 	TPD_INFO("%s: %s force_water_mode is not supported .\n", __func__, enable ? "Enter" : "Exit");
@@ -5262,30 +5188,6 @@ static void syna_read_water_flag(void *chip_data)
 		ts->water_mode = 0;
 	}
 }
-
-static void syna_getglove_mode_status(void *chip_data, int *enable)
-{
-	struct syna_tcm_hcd *tcm_hcd = (struct syna_tcm_hcd *)chip_data;
-	struct touch_hcd *touch_hcd = tcm_hcd->touch_hcd;
-	struct touch_data *touch_data = &touch_hcd->touch_data;
-	int retval = 0;
-	unsigned short config;
-
-	retval = syna_tcm_get_dynamic_config(tcm_hcd, DC_GLOVE_MODE_STATE, &config);
-	if (retval < 0) {
-		TPD_INFO("Failed to get dynamic DC_GLOVE_MODE_STATE  config\n");
-		return;
-	}
-	/*0x0F indicates the initial state;
-	0x00 indicates that stage 1 has been entered, and there is no glove on the detection state surface
-	0x01 indicates that stage 1 has been entered, and objects have been detected on the surface, but the conditions for stage 2 have not yet been met
-	0x02 indicates that the glove mode is entered, and it will not exit after raising your hand.*/
-	*enable = (config == 0x02 ? 1 : 0);
-	TPD_INFO("%s: config id is %d, enable: %d ,glove_status%d\n", __func__, config, *enable, touch_data->glove_status);
-
-	return;
-}
-
 static int syna_tcm_diaphragm_touch_lv_set(void *chip_data, int level)
 {
 	struct syna_tcm_hcd *tcm_info = (struct syna_tcm_hcd *)chip_data;
@@ -5300,19 +5202,19 @@ static int syna_tcm_diaphragm_touch_lv_set(void *chip_data, int level)
 
 	switch (level) {
 	case DIAPHRAGM_DEFAULT_MODE:
-		regval = 0xfffc & regval;
+		regval = 0xfcff & regval;
 		break;
 	case DIAPHRAGM_FILM_MODE:
-		regval = 0xfffc & regval;
-		regval = 0x0001 | regval;
+		regval = 0xfcff & regval;
+		regval = 0x0100 | regval;
 		break;
 	case DIAPHRAGM_WATERPROO_MODE:
-		regval = 0xfffc & regval;
-		regval = 0x0002 | regval;
+		regval = 0xfcff & regval;
+		regval = 0x0200 | regval;
 		break;
 	case DIAPHRAGM_FILM_WATERPROO_MODE:
-		regval = 0xfffc & regval;
-		regval = 0x0003 | regval;
+		regval = 0xfcff & regval;
+		regval = 0x0200 | regval;
 		break;
 	default:
 		TPD_INFO("error, level = %d", level);
@@ -5363,7 +5265,6 @@ static struct oplus_touchpanel_operations syna_tcm_ops = {
 	.smooth_lv_set    = syna_tcm_smooth_lv_set,
 	.sensitive_lv_set = syna_tcm_sensitive_lv_set,
 	.get_glove_mode         = syna_getglove_mode_status,
-	.tp_irq_control  = syna_tp_irq_control,
 	.diaphragm_touch_lv_set    = syna_tcm_diaphragm_touch_lv_set,
 };
 
@@ -5374,7 +5275,6 @@ void tp_wait_hdl_finished(void)
 {
 	int retry_cnt = 0;
 	struct syna_tcm_hcd *tcm_hcd = g_tcm_hcd;
-	struct touchpanel_data *ts = spi_get_drvdata(tcm_hcd->s_client);
 
 	if (!g_tcm_hcd) {
 		return;
@@ -5382,56 +5282,35 @@ void tp_wait_hdl_finished(void)
 
 	syna_tcm_stop_reset_timer(tcm_hcd);
 
-	if(ts->tcm_skip_time) {
-		do {
-			if (retry_cnt) {
-				msleep(10);
-			}
-			retry_cnt++;
-			TPD_INFO("Wait hdl finished retry %d times...  ts->irq_state =%d \n", retry_cnt, ts->irq_state);
-		} while (!g_tcm_hcd->hdl_finished_flag && retry_cnt < 200 && ts->irq_state);
-	} else {
-		do {
-			if (retry_cnt) {
-				msleep(10);
-			}
-			retry_cnt++;
-			TPD_INFO("Wait hdl finished retry %d times...\n", retry_cnt);
-		} while (!g_tcm_hcd->hdl_finished_flag && retry_cnt < 200);
-	}
+	do {
+		if (retry_cnt) {
+			msleep(100);
+		}
+		retry_cnt++;
+		TPD_INFO("Wait hdl finished retry %d times...  \n", retry_cnt);
+	} while (!g_tcm_hcd->hdl_finished_flag && retry_cnt < 20);
 }
 
 /*
 *Interface for lcd to control tp irq
 *mode:0-esd 1-black gesture
 */
-int syna_tp_irq_control(void *chip_data, bool enable, int mode)
+int tp_control_irq(bool enable, int mode)
 {
-	struct syna_tcm_hcd *tcm_hcd = (struct syna_tcm_hcd *)chip_data;
-	struct touchpanel_data *ts = spi_get_drvdata(tcm_hcd->s_client);
+	struct syna_tcm_hcd *tcm_hcd = g_tcm_hcd;
 	if (mode == 0) {
 		if (enable) {
-			if (ts->irq_state == 1) {
-				TPD_INFO("%s tp irq is enable,enable_irq skip\n", __func__);
-			} else {
-				enable_irq(g_tcm_hcd->s_client->irq);
-				tcm_hcd->tp_irq_state = 1;
-				ts->irq_state = 1;
-				TPD_INFO("%s enable_irq\n", __func__);
-			}
+			TPD_INFO("%s enable\n", __func__);
+			tcm_hcd->esd_irq_disabled = 0;
+			enable_irq(g_tcm_hcd->s_client->irq);
 		} else {
+			TPD_INFO("%s disable\n", __func__);
 			g_tcm_hcd->response_code = STATUS_ERROR;
-			atomic_set(&g_tcm_hcd->command_status, CMD_ERROR);
+			atomic_set(&g_tcm_hcd->command_status, CMD_IDLE);
 			complete(&response_complete);
+			tcm_hcd->esd_irq_disabled = 1;
 			wait_zeroflash_firmware_work();
-			if (ts->irq_state == 0) {
-				TPD_INFO("%s tp irq is disable,disable_irq skip\n", __func__);
-			} else {
-				disable_irq_nosync(g_tcm_hcd->s_client->irq);
-				tcm_hcd->tp_irq_state = 0;
-				ts->irq_state = 0;
-				TPD_INFO("%s disable_irq_nosync\n", __func__);
-			}
+			disable_irq_nosync(g_tcm_hcd->s_client->irq);
 		}
 	} else if (mode == 1) {
 		if (enable) {
@@ -5447,7 +5326,7 @@ int syna_tp_irq_control(void *chip_data, bool enable, int mode)
 
 	return 0;
 }
-
+EXPORT_SYMBOL(tp_control_irq);
 /*100ms*/
 #define RESET_TIMEOUT_TIME 100 * 1000 * 1000
 
@@ -5626,7 +5505,6 @@ static int syna_tcm_spi_probe(struct spi_device *spi)
 	tcm_hcd->tp_fw_update_parse = true;
 	tcm_hcd->tp_irq_state = 1;
 	ts->chip_data = tcm_hcd;
-	ts->irq_state = 1;
 
 	/*tcm_hcd->syna_ops = &syna_proc_ops;*/
 	ts->ts_ops = &syna_tcm_ops;
@@ -5673,25 +5551,14 @@ static int syna_tcm_spi_probe(struct spi_device *spi)
 		return retval;
 	}
 
-	init_completion(&tcm_hcd->config_complete);
-	tcm_hcd->init_okay = false;
-	g_tcm_hcd->hdl_finished_flag = 0;
-	tcm_hcd->init_okay = true;
-	syna_remote_zeroflash_init(tcm_hcd);
-
 	retval = register_common_touch_device(ts);
 
+	tcm_hcd->tcm_firmware_headfile = ts->firmware_in_dts;
 	if (retval < 0 && (retval != -EFTM)) {
 		TPD_INFO("Failed to init device information\n");
 		goto err_register_driver;
 	}
-	if(ts->firmware_in_dts != NULL) {
-		tcm_hcd->tcm_firmware_headfile = ts->firmware_in_dts;
-		TPD_INFO("tcm_firmware_headfile run\n");
-	} else {
-		tcm_hcd->p_firmware_headfile = &ts->panel_data.firmware_headfile;
-		TPD_INFO("p_firmware_headfile run\n");
-	}
+	tcm_hcd->p_firmware_headfile = &ts->panel_data.firmware_headfile;
 	tcm_hcd->health_monitor_support = ts->health_monitor_support;
 	if (tcm_hcd->health_monitor_support) {
 		tcm_hcd->monitor_data = &ts->monitor_data;
@@ -5708,6 +5575,7 @@ static int syna_tcm_spi_probe(struct spi_device *spi)
 	}
 
 	synaptics_create_proc(ts, tcm_hcd->syna_ops);
+	init_completion(&tcm_hcd->config_complete);
 
 	device_hcd = syna_remote_device_init(tcm_hcd);
 	if (device_hcd) {
@@ -5717,6 +5585,11 @@ static int syna_tcm_spi_probe(struct spi_device *spi)
 		device_hcd->reset = syna_tcm_reset;
 		device_hcd->report_touch = syna_device_report_touch;
 	}
+	tcm_hcd->init_okay = false;
+	g_tcm_hcd->hdl_finished_flag = 0;
+
+	tcm_hcd->init_okay = true;
+	syna_remote_zeroflash_init(tcm_hcd);
 /*#ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
     if (ts->boot_mode == RECOVERY_BOOT)
 #else

@@ -46,6 +46,8 @@ typedef enum {
 	VR_SDN_MODE6_7,
     WDTRSTB,
 	STS_SPMI_SEQ_OFF,
+        /* MT6661/MT6363/MT6667 */
+        OPLUS_UVLO_FLAG,
 }pmic_regs_t;
 
 struct PMICRegStruct {
@@ -74,6 +76,8 @@ struct PMICRegStruct {
 	unsigned int vr_sdn_mode6_7;
     unsigned int wdtrstb;
 	unsigned int sts_spmi_seq_off;
+    /* MT6661/MT6363/MT6667 */
+    unsigned int oplus_uvlo_flag;
 };
 
 

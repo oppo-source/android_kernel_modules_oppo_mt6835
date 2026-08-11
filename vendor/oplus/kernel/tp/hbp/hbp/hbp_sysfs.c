@@ -7,8 +7,11 @@
 #include "utils/debug.h"
 #include "hbp_core.h"
 #include "hbp_notify.h"
+#include "hbp_power.h"
 
 extern void hbp_state_notify(struct hbp_core *hbp, int id, hbp_panel_event event);
+extern void hbp_power_ctrl(struct hbp_device *hbp_dev, struct power_sequeue sq[]);
+extern void hbp_set_irq_status(struct hbp_device *hbp_dev, bool en);
 
 static int select_int_para(const char *input, int idx, int *val)
 {
@@ -173,6 +176,102 @@ static ssize_t debug_level_show(struct device *dev,
 			 get_debug_level());
 }
 
+static ssize_t debug_reset_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	int id = -1;
+	int state = -1;
+	struct power_sequeue sq_on[] = {
+		{POWER_RESET, 0, 10},
+		{POWER_RESET, 1, 100},
+		{0,0,0}
+	};
+	struct power_sequeue sq_off[] = {
+		{POWER_RESET, 1, 10},
+		{POWER_RESET, 0, 100},
+		{0,0,0}
+	};
+	struct hbp_core *hbp = dev_get_drvdata(dev);
+
+	/*data style: id,state*/
+	if (select_int_para(buf, 0, &id) != 0 || id < 0 || id >= MAX_DEVICES) {
+		hbp_err("Invalid id value\n");
+		return -EINVAL;
+	}
+	if (select_int_para(buf, 1, &state) != 0) {
+		hbp_err("Invalid state value\n");
+		return -EINVAL;
+	}
+	if (!hbp->devices[id]) {
+		hbp_err("Invalid id value\n");
+		return -EINVAL;
+	}
+
+	hbp_info("devices id %d, state %d\n", id, state);
+	hbp_power_ctrl(hbp->devices[id], state == 0 ? sq_on : sq_off);
+
+	return count;
+}
+
+static ssize_t reset_show(struct device *dev,
+			      struct device_attribute *attr,
+			      char *buf)
+{
+    return 0;
+}
+
+static ssize_t irq_enable_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	int id = -1;
+	int state = -1;
+	struct hbp_core *hbp = dev_get_drvdata(dev);
+
+	/*data style: id,state*/
+	if (select_int_para(buf, 0, &id) != 0 || id < 0 || id >= MAX_DEVICES) {
+		hbp_err("Invalid id value\n");
+		return -EINVAL;
+	}
+
+	if (select_int_para(buf, 1, &state) != 0) {
+		hbp_err("Invalid state value\n");
+		return -EINVAL;
+	}
+	if (!hbp->devices[id]) {
+		hbp_err("Invalid id value\n");
+		return -EINVAL;
+	}
+
+	hbp_info("devices id %d, state %d\n", id, state);
+	hbp_set_irq_status(hbp->devices[id], state);
+
+	return count;
+}
+
+static ssize_t irq_enable_show(struct device *dev,
+			      struct device_attribute *attr,
+			      char *buf)
+{
+	int cnt = 0;
+	int i = 0;
+	struct hbp_core *hbp = dev_get_drvdata(dev);
+
+	for (i = 0; i < MAX_DEVICES; i++) {
+		if (!hbp->devices[i]) {
+			continue;
+		}
+		cnt += scnprintf(buf + cnt, PAGE_SIZE,
+				 "devices id %d, irq_enabled state %d\n",
+				 hbp->devices[i]->id,
+				 hbp->devices[i]->irq_enabled);
+	}
+    return cnt;
+}
+
+static DEVICE_ATTR(debug_reset, 0660, reset_show, debug_reset_store);
+static DEVICE_ATTR(irq_enable, 0660, irq_enable_show, irq_enable_store);
 static DEVICE_ATTR(settings, 0660, touch_settings_show, NULL);
 static DEVICE_ATTR(trusted_enable, 0660, NULL, trusted_enable_store);
 static DEVICE_ATTR(trusted_type, 0660, trusted_type_show, NULL);
@@ -182,6 +281,8 @@ static DEVICE_ATTR(active_id, 0660, active_id_show, active_id_store);
 static DEVICE_ATTR(debug_level, 0660, debug_level_show, debug_level_store);
 
 static struct attribute *hbp_attrs[] = {
+	&dev_attr_debug_reset.attr,
+	&dev_attr_irq_enable.attr,
 	&dev_attr_settings.attr,
 	&dev_attr_trusted_enable.attr,
 	&dev_attr_trusted_type.attr,

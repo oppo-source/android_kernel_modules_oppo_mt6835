@@ -5,6 +5,7 @@
 #include "powerkey_monitor.h"
 #include "theia_kevent_kernel.h"
 #include <linux/time.h>
+#include "theia_trace.h"
 
 #define POWER_MONITOR_DEBUG_PRINTK(a, arg...)\
 	do {\
@@ -22,6 +23,8 @@ static int stage_start = 0;
 
 #define PROC_PWK_MONITOR_PARAM "pwkMonitorParam"
 #define PROC_PWK_REPORT "theiaPwkReport"
+#define SUSPEND_TIMEOUT_KEYWORD1 "devname"
+#define SUSPEND_TIMEOUT_KEYWORD2 "duration"
 
 static struct task_struct *block_thread = NULL;
 /* Control node write */
@@ -167,6 +170,15 @@ static ssize_t powerkey_monitor_param_proc_write(struct file *file,
 		if (ret == 2) {
 			if (!handle_param_setup(key, value))
 				POWER_MONITOR_DEBUG_PRINTK("%s: setup param fail! key:%s, value:%s\n", __func__, key, value);
+		} else if (ret == 1) {
+			POWER_MONITOR_DEBUG_PRINTK("%s: Only key found: key:%s\n", __func__, key);
+			if (strstr(key, SUSPEND_TIMEOUT_KEYWORD1) != NULL && strstr(key, SUSPEND_TIMEOUT_KEYWORD2) != NULL) {
+				POWER_MONITOR_DEBUG_PRINTK("%s: send_suspend_timeout_msg\n", __func__);
+				trace_black_screen_monitor(get_timestamp_ms(), SYSTEM_ID, PWKKEY_DCS_TAG, PWKKEY_DCS_EVENTID, PWKKEY_BLACK_SCREEN_DCS_LOGTYPE, g_black_data.error_id,
+						g_black_data.error_count, get_systemserver_pid(), key);
+			}
+		} else {
+			POWER_MONITOR_DEBUG_PRINTK("%s: Failed to parse param: %s\n", __func__, param);
 		}
 		param = strsep(&pBuffer, ";");
 	}

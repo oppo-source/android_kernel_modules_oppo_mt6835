@@ -197,6 +197,7 @@
 #define HIF_SER_MAX_TIMEOUT_CNT			10	/* msec */
 #define HIF_SER_POWER_OFF_RETRY_COUNT		100
 #define HIF_SER_POWER_OFF_RETRY_TIME		10	/* msec */
+#define HIF_SER_CMD_TIMEOUT			20000	/* msec */
 
 #define MT_RINGREG_DIFF		0x10
 #define MT_RINGREG_EXT_DIFF	0x04

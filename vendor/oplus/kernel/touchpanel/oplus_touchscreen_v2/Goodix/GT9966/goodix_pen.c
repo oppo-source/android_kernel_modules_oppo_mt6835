@@ -224,7 +224,7 @@ int goodix_enable_pen_mode(struct chip_data_brl *chip_info, bool enable)
 		tp_healthinfo_report(&chip_info->ts->monitor_data, HEALTH_REPORT, "pen mode enable");
 	} else {
 		if (chip_info->pen_state == PEN_DOWN) {
-			TPD_INFO("GT_brlD:now penDown,start work to detect penUp\n", __func__);
+			TPD_INFO("GT_brlD:[%s] now penDown,start work to detect penUp\n", __func__);
 			schedule_work(&chip_info->check_pendown_work);
 		} else if (chip_info->pen_state == PEN_UP) {
 			ret = goodix_send_cmd_simple(chip_info, GTP_PEN_ENABLE_MASK, GTP_MASK_DISABLE);

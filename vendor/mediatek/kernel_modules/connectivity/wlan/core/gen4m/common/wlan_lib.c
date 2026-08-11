@@ -8993,6 +8993,10 @@ void wlanInitFeatureOption(struct ADAPTER *prAdapter)
 	prWifiVar->fgHwDetectReportEn = (bool) wlanCfgGetUint32(
 		prAdapter, "HwDetectReportEnable", FEATURE_ENABLED);
 #endif /* CFG_HW_DETECT_REPORT  */
+
+	prWifiVar->u4CmdTimeout = (uint32_t)wlanCfgGetUint32(
+		prAdapter, "CmdTimeout",
+		HIF_SER_CMD_TIMEOUT);
 }
 
 void wlanCfgSetSwCtrl(struct ADAPTER *prAdapter)

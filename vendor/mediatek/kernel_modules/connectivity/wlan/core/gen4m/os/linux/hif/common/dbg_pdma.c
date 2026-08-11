@@ -122,6 +122,7 @@ struct wfdma_ring_info {
 static void halCheckHifState(struct ADAPTER *prAdapter);
 static void halDumpHifDebugLog(struct ADAPTER *prAdapter);
 static bool halIsTxTimeout(struct ADAPTER *prAdapter, uint32_t *u4Token);
+static bool halIsCmdTimeout(struct ADAPTER *prAdapter);
 
 /*******************************************************************************
  *                              F U N C T I O N S
@@ -322,6 +323,11 @@ static void halCheckHifState(struct ADAPTER *prAdapter)
 			if (prBusInfo->checkDmaShdlErr)
 				prBusInfo->checkDmaShdlErr(prAdapter);
 		}
+	}
+
+	if (halIsCmdTimeout(prAdapter) == TRUE) {
+		prAdapter->u4HifChkFlag |= HIF_DRV_SER;
+		DBGLOG(HAL, INFO, "Cmd timeout, trigger SER\n");
 	}
 
 	if (prAdapter->u4HifChkFlag & HIF_DRV_SER)
@@ -731,6 +737,53 @@ static bool halIsTxTimeout(struct ADAPTER *prAdapter, uint32_t *u4Token)
 	}
 
 	*u4Token = u4TokenId;
+
+	return fgIsTimeout;
+}
+
+bool halIsCmdTimeout(struct ADAPTER *prAdapter)
+{
+	struct GLUE_INFO *prGlueInfo = NULL;
+	struct GL_HIF_INFO *prHifInfo = NULL;
+	struct WIFI_VAR *prWifiVar = NULL;
+	struct RTMP_TX_RING *prTxRing = NULL;
+	uint32_t u4CurrTick;
+	uint32_t u4DmaIdx = 0, u4CpuIdx = 0, u4MaxCnt = 0;
+	bool fgIsTimeout = false;
+
+	if (!prAdapter)
+		return fgIsTimeout;
+
+	prWifiVar = &prAdapter->rWifiVar;
+	prGlueInfo = prAdapter->prGlueInfo;
+	prHifInfo = &prGlueInfo->rHifInfo;
+	prTxRing = &prHifInfo->TxRing[TX_RING_CMD];
+	kalDevRegRead(prGlueInfo, prTxRing->hw_cnt_addr, &u4MaxCnt);
+	kalDevRegRead(prGlueInfo, prTxRing->hw_cidx_addr, &u4CpuIdx);
+	kalDevRegRead(prGlueInfo, prTxRing->hw_didx_addr, &u4DmaIdx);
+
+	u4MaxCnt &= MT_RING_CNT_MASK;
+	u4CpuIdx &= MT_RING_CIDX_MASK;
+	u4DmaIdx &= MT_RING_DIDX_MASK;
+
+	u4CurrTick = kalGetTimeTick();
+
+	/* No pending cmd, no timeout
+	 * DMA idx updated, no timeout
+	 * DMA idx no updated, check timeout
+	 */
+	if (u4MaxCnt == 0) {
+		fgIsTimeout = false;
+	} else if (prAdapter->u4LastCmdDmaDoneIdx != u4DmaIdx) {
+		prAdapter->u4LastCmdDmaDoneIdx = u4DmaIdx;
+		prAdapter->rLastCmdTxdoneTime = u4CurrTick;
+		fgIsTimeout = false;
+	} else if (CHECK_FOR_TIMEOUT(u4CurrTick,
+			prAdapter->rLastCmdTxdoneTime,
+			MSEC_TO_SYSTIME(prWifiVar->u4CmdTimeout))) {
+		if (u4CpuIdx != u4DmaIdx)
+			fgIsTimeout = true;
+	}
 
 	return fgIsTimeout;
 }

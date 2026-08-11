@@ -320,6 +320,9 @@ INT32 wmt_lib_init(VOID)
 		return -2;
 	}
 
+	sched_set_fifo(pThread->pThread);
+	WMT_INFO_FUNC("sched_set_fifo for mtk_wmtd\n");
+
 	/* create worker timer */
 	gDevWmt.worker_timer.timeoutHandler = wmt_lib_wmtd_worker_thread_timeout_handler;
 	gDevWmt.worker_timer.timeroutHandlerData = 0;

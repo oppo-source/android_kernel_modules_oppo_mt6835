@@ -2,6 +2,11 @@
 #include "jadard_common.h"
 #include "jadard_module.h"
 
+#ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#include <mt-plat/mtk_boot_common.h>
+#else
+#include <soc/oplus/system/boot_mode.h>
+#endif
 struct jadard_module_fp g_module_fp;
 struct jadard_ts_data *pjadard_ts_data = NULL;
 struct jadard_ic_data *pjadard_ic_data = NULL;
@@ -3287,7 +3292,26 @@ int jadard_chip_common_init(void)
     jd_proximity_node_init();
 #endif
 #endif
+#ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+	if (ts->jadard_oplus_ts_backup->boot_mode == RECOVERY_BOOT
+	    || is_oem_unlocked() || ts->jadard_oplus_ts_backup->fw_update_in_probe_with_headfile) {
+	JD_I(" %s: firmware_headfile update!\n", __func__);
+	err = g_module_fp.fp_0f_upgrade_fw(NULL, ts->p_firmware_headfile);
 
+#else
+	if (ts->jadard_oplus_ts_backup->boot_mode == MSM_BOOT_MODE__RECOVERY
+	    || is_oem_unlocked() || ts->jadard_oplus_ts_backup->fw_update_in_probe_with_headfile) {
+	JD_I(" %s: firmware_headfile update!\n", __func__);
+	err = g_module_fp.fp_0f_upgrade_fw(NULL, ts->p_firmware_headfile);
+#endif
+
+    if (err >= 0) {
+        g_module_fp.fp_read_fw_ver();
+    } else {
+        JD_E(" %s: firmware updata failed!\n", __func__);
+    }
+
+	}
     return JD_NO_ERR;
 
 #ifdef CONFIG_TOUCHSCREEN_JADARD_DEBUG

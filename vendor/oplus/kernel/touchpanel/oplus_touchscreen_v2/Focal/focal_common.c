@@ -1500,6 +1500,17 @@ static int focal_test_item(struct seq_file *s, struct touchpanel_data *ts,
 		}
 		support_item++;
 	}
+
+	if (!fts_test_ops->test12) {
+		TPD_INFO("test%d not support\n", TYPE_TEST12);
+	} else {
+		ret = fts_test_ops->test12(s, ts->chip_data, NULL, NULL);
+		if (ret < 0) {
+			TPD_INFO("test%d failed! ret is %d\n", TYPE_TEST12, ret);
+			error_count++;
+		}
+	}
+
 	if (!fts_test_ops->auto_test_endoperation) {
 		TPD_INFO("not support fts_test_ops->auto_test_preoperation callback\n");
 

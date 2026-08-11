@@ -74,14 +74,16 @@ void frame_destory(struct frame_queue *queue)
 static inline int frame_write(struct list_head *flist, char *data,
 			      unsigned int data_size,
 			      enum irq_reason reason,
-			      unsigned long long frm_count)
+			      unsigned long long frm_count,
+			      union touch_time time)
 {
 	struct frame_list *frame = container_of(flist, struct frame_list, list);
 	struct timespec64 tv;
 
 	if (data_size <= frame->data_size) {
+		frame->buf->frame_tv0.value[0] = time.value[0];
 		ktime_get_ts64(&tv);
-		frame->buf->frame_tv0.value[0] = timespec64_to_ns(&tv);
+		frame->buf->frame_tv0.value[1] = timespec64_to_ns(&tv);
 		frame->buf->reason = reason;
 		memcpy(&frame->buf->data[0], data, data_size);
 		frame->cunsumed = false;
@@ -124,7 +126,8 @@ static inline struct list_head *frame_valid_list(struct list_head *freed,
 inline int frame_put(char *data,
 		     unsigned int data_size,
 		     enum irq_reason reason,
-		     struct frame_queue *queue)
+		     struct frame_queue *queue,
+		     union touch_time time)
 {
 	struct frame_list *frame, *temp;
 	struct list_head *valid;
@@ -139,7 +142,7 @@ inline int frame_put(char *data,
 		return -EFAULT;
 	}
 
-	frame_write(valid, data, data_size, reason, queue->frame_count);
+	frame_write(valid, data, data_size, reason, queue->frame_count, time);
 
 	list_for_each_entry_safe(frame, temp, &queue->freed, list) {
 		if (frame->cunsumed == false) {

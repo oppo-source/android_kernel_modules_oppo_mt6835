@@ -1997,6 +1997,9 @@ MTKSTP_PSM_T *stp_psm_init(VOID)
 		STP_PSM_PR_ERR("osal_thread_create fail...\n");
 		goto ERR_EXIT5;
 	}
+        sched_set_fifo(stp_psm->PSMd.pThread);
+        STP_PSM_PR_INFO("sched_set_fifo\n");
+
 	/* init_waitqueue_head(&stp_psm->wait_wmt_q); */
 	stp_psm->wait_wmt_q.timeoutValue = STP_PSM_WAIT_EVENT_TIMEOUT;
 	osal_event_init(&stp_psm->wait_wmt_q);

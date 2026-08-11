@@ -1979,6 +1979,80 @@ test_err:
 	return ret;
 }
 
+int ft3683g_rst_autotest(struct seq_file *s, void *chip_data,
+                                  struct auto_testdata *focal_testdata, struct test_item_info *p_test_item_info)
+{
+	int ret = 0;
+	u8 val = 0;
+	u8 val2 = 0;
+	u8 val3 = 0;
+	struct chip_data_ft3683g *ts_data = (struct chip_data_ft3683g *)chip_data;
+
+	FTS_TEST_FUNC_ENTER();
+	FTS_TEST_SAVE_INFO("\n============ Test Item: Reset Test\n");
+
+	enter_work_mode();
+
+	ret = fts_test_read_reg(FACTORY_FTS_RESET_TEST, &val);
+	if (ret < 0) {
+		FTS_TEST_SAVE_ERR("one: read report_rate error, ret=%d\n", ret);
+		goto test_err;
+	}
+
+	val2 = val - 1;
+	ret = fts_test_write_reg(FACTORY_FTS_RESET_TEST, val2);
+	if (ret < 0) {
+		FTS_TEST_SAVE_ERR("one: set report_rate fail, ret=%d\n", ret);
+		goto test_err;
+	}
+
+	ft3683g_rstpin_reset((void*)ts_data);
+	ret = fts_test_read_reg(FACTORY_FTS_RESET_TEST, &val3);
+	if (ret < 0) {
+		FTS_TEST_SAVE_ERR("one: read report_rate error, ret=%d\n", ret);
+		goto test_err;
+	}
+
+	TPD_INFO("one: reset test: val = %d, val3 = %d", val, val3);
+
+	ret = fts_test_read_reg(FACTORY_FTS_RESET_TEST, &val);
+	if (ret < 0) {
+		FTS_TEST_SAVE_ERR("two: read report_rate error, ret=%d\n", ret);
+		goto test_err;
+	}
+
+	val2 = val - 1;
+	ret = fts_test_write_reg(FACTORY_FTS_RESET_TEST, val2);
+	if (ret < 0) {
+		FTS_TEST_SAVE_ERR("two: set report_rate fail, ret=%d\n", ret);
+		goto test_err;
+	}
+
+	ft3683g_rstpin_reset((void*)ts_data);
+	ret = fts_test_read_reg(FACTORY_FTS_RESET_TEST, &val3);
+	if (ret < 0) {
+		FTS_TEST_SAVE_ERR("two: read report_rate error, ret=%d\n", ret);
+		goto test_err;
+	}
+
+	TPD_INFO("two: reset test: val = %d, val3 = %d", val, val3);
+
+	if (val3 != val) {
+		FTS_TEST_SAVE_ERR("check reg to test rst failed.\n");
+		ret = -1;
+	}
+
+test_err:
+	if (!ret) {
+		FTS_TEST_SAVE_INFO("------Reset Test PASS\n");
+	} else {
+		FTS_TEST_SAVE_INFO("------Reset Test NG\n");
+	}
+
+	FTS_TEST_FUNC_EXIT();
+	return ret;
+}
+
 int ft3683g_panel_differ_test(struct seq_file *s, void *chip_data,
                              struct auto_testdata *focal_testdata, struct test_item_info *p_test_item_info)
 {

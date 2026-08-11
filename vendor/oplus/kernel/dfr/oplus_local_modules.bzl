@@ -243,6 +243,15 @@ def define_oplus_local_modules():
         includes = ["."],
         local_defines = ["CONFIG_OPLUS_FEATURE_FULLDUMP_BACK"],
     )
+    define_oplus_ddk_module(
+        name = "mtk_wdt",
+        srcs = native.glob([
+            "**/*.h",
+            "qcom/mtk_wdt/mtk_wdt.c",
+        ]),
+        includes = ["."],
+        local_defines = ["CONFIG_OPLUS_MTK_WDT"],
+    )
 
     define_oplus_ddk_module(
         name = "oplus_bsp_dfr_kp_freeze_detect",
@@ -275,6 +284,7 @@ def define_oplus_local_modules():
             "oplus_inject",
             "oplus_inject_aw8692x",
             "oplus_bsp_dfr_ordump",
+            "mtk_wdt",
         ],
         conditional_builds = {
             "oplus_inject_aw8692x": {

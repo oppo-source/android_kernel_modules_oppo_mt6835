@@ -25,6 +25,11 @@ enum irq_reason {
 	IRQ_REASON_RESET_WDT,
 	IRQ_REASON_RESET_EXTERNAL,
 	IRQ_REASON_RESET_PWR,
+	IRQ_REASON_RESET_IDENTIFY,
+	IRQ_REASON_GESTURE_DIFF,
+	IRQ_REASON_RESPONSE = 0xB0,
+	IRQ_REASON_LBP_POINTS_REPORT,
+	IRQ_REASON_UPLINK_REPORT,
 };
 
 union touch_time {
@@ -63,7 +68,7 @@ struct frame_queue {
 	struct list_head cunsume;
 };
 
-inline int frame_put(char *buf, unsigned int size, enum irq_reason reason, struct frame_queue *queue);
+inline int frame_put(char *buf, unsigned int size, enum irq_reason reason, struct frame_queue *queue, union touch_time time);
 inline int frame_get(char __user *buf, unsigned int size, struct frame_queue *queue);
 inline void frame_clear(struct frame_queue *queue);
 void frame_wake_up_waitq(struct frame_queue *queue);

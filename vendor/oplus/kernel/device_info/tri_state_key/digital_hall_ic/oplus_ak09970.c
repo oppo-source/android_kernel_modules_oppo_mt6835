@@ -16,6 +16,7 @@
 #include <linux/of_gpio.h>
 #include <linux/regulator/consumer.h>
 #include <linux/init.h>
+#include <linux/pinctrl/consumer.h>
 #include "oplus_ak09970.h"
 #include "../oplus_tri_key.h"
 
@@ -35,6 +36,7 @@ static struct hall_srs ak09970_ranges[] = {
 };
 
 static DEFINE_MUTEX(ak09970_i2c_mutex);
+static DEFINE_MUTEX(ak09970_getData_mutex);
 
 #define MAX_I2C_RETRY_TIME 2
 static int ak09970_i2c_read_block(struct oplus_dhall_chip *chip, u8 addr, u8 *data, u8 len)
@@ -43,6 +45,7 @@ static int ak09970_i2c_read_block(struct oplus_dhall_chip *chip, u8 addr, u8 *da
 	int err = 0, retry = 0;
 	struct i2c_client *client = chip->client;
 	struct i2c_msg msgs[2] = {{0}, {0}};
+	u8 *rbuf = NULL;
 #if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
 	char payload[1024] = {0x00};
 #endif
@@ -54,6 +57,13 @@ static int ak09970_i2c_read_block(struct oplus_dhall_chip *chip, u8 addr, u8 *da
 		TRI_KEY_LOG(" length %d exceeds %d\n", len, AK09970_I2C_REG_MAX_SIZE);
 		return -EINVAL;
 	}
+
+	rbuf = kzalloc(len,  GFP_KERNEL | GFP_DMA);
+	if (!rbuf) {
+		TRI_KEY_LOG("rbuf null\n");
+		return -ENOMEM;
+	}
+
 	mutex_lock(&ak09970_i2c_mutex);
 
 	msgs[0].addr = client->addr;
@@ -64,7 +74,7 @@ static int ak09970_i2c_read_block(struct oplus_dhall_chip *chip, u8 addr, u8 *da
 	msgs[1].addr = client->addr;
 	msgs[1].flags = I2C_M_RD;
 	msgs[1].len = len;
-	msgs[1].buf = data;
+	msgs[1].buf = rbuf;
 
 	for (retry = 0; retry < MAX_I2C_RETRY_TIME; retry++) {
 		err = i2c_transfer(client->adapter, msgs, (sizeof(msgs) / sizeof(msgs[0])));
@@ -84,12 +94,18 @@ static int ak09970_i2c_read_block(struct oplus_dhall_chip *chip, u8 addr, u8 *da
 #if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
 		scnprintf(payload, sizeof(payload),
 				"NULL$$EventField@@DownHallRead$$FieldData@@Err%d$$detailData@@%d[%*ph]%d",
-				err, addr, len, data, len);
+				err, addr, len, rbuf, len);
 		oplus_kevent_fb(FB_TRI_STATE_KEY, TRIKEY_FB_BUS_TRANS_TYPE, payload);
 #endif
 		err = -EIO;
 	}
 	mutex_unlock(&ak09970_i2c_mutex);
+
+	memcpy(data, rbuf, len);
+	if (rbuf) {
+		kfree(rbuf);
+		rbuf = NULL;
+	}
 
 	return err;
 }
@@ -97,33 +113,43 @@ static int ak09970_i2c_read_block(struct oplus_dhall_chip *chip, u8 addr, u8 *da
 static int ak09970_i2c_write_block(struct oplus_dhall_chip *chip, u8 addr, u8 *data, u8 len)
 {
 	int err = 0, retry = 0;
+	int i = 0;
 	int idx = 0;
 	int num = 0;
 	char buf[AK09970_I2C_REG_MAX_SIZE] = {0};
+	char *wbuf = NULL;
+	char rdata[AK09970_I2C_REG_MAX_SIZE] = {0};
+
 	struct i2c_client *client = chip->client;
 #if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
 	char payload[1024] = {0x00};
 #endif
 
 	if (!client) {
-		TRI_KEY_LOG("client null\n");
+		TRI_KEY_LOG("client null.\n");
 		return -EINVAL;
 	} else if (len >= AK09970_I2C_REG_MAX_SIZE) {
 		TRI_KEY_LOG(" length %d exceeds %d\n", len, AK09970_I2C_REG_MAX_SIZE);
 		return -EINVAL;
 	}
 
+	wbuf = kzalloc(AK09970_I2C_REG_MAX_SIZE, GFP_KERNEL | GFP_DMA);
+	if (!wbuf) {
+		TRI_KEY_LOG("wbuf alloc failed.\n");
+		return -ENOMEM;
+	}
+
 	mutex_lock(&ak09970_i2c_mutex);
 
-	buf[num++] = addr;
+	wbuf[num++] = addr;
 	for (idx = 0; idx < len; idx++) {
-		buf[num++] = data[idx];
+		wbuf[num++] = data[idx];
 	}
 
 	for (retry = 0; retry < MAX_I2C_RETRY_TIME; retry++) {
 		/*TRI_KEY_LOG("----ak09970_i2c_write_block: (0x%02X %p %d)\n",addr, data, len);
 		/dump_stack();*/
-		err = i2c_master_send(client, buf, num);
+		err = i2c_master_send(client, wbuf, num);
 
 		if (err < 0) {
 			TRI_KEY_LOG("send command error!! %d\n", err);
@@ -143,6 +169,43 @@ static int ak09970_i2c_write_block(struct oplus_dhall_chip *chip, u8 addr, u8 *d
 	}
 
 	mutex_unlock(&ak09970_i2c_mutex);
+	if (wbuf) {
+		kfree(wbuf);
+		wbuf = NULL;
+	}
+
+	if (chip->fpga_trans_support) {
+		ak09970_i2c_read_block(chip, addr, rdata, len);
+		for(i = 0; i < len; i++) {
+			if (rdata[i] != data[i]) {
+				TRI_KEY_LOG("write regs:%*ph\n", len, rdata);
+				TRI_KEY_LOG("read  regs:%*ph\n", len, data);
+				break;
+			}
+		}
+		if (i != len) {
+			num = 0;
+			memset(buf, 0, sizeof(buf));
+
+			mutex_lock(&ak09970_i2c_mutex);
+			buf[num++] = addr;
+			for (idx = 0; idx < len; idx++) {
+				buf[num++] = data[idx];
+			}
+
+			for (retry = 0; retry < MAX_I2C_RETRY_TIME; retry++) {
+				err = i2c_master_send(client, buf, num);
+
+				if (err < 0) {
+					TRI_KEY_LOG("send command error!! %d\n", err);
+					msleep(20);
+				} else {
+					break;
+				}
+			}
+			mutex_unlock(&ak09970_i2c_mutex);
+		}
+	}
 	return err;
 }
 
@@ -172,7 +235,7 @@ static int mysqrt(long x)
 
 static int ak09970_get_data(struct dhall_data_xyz *data)
 {
-	int err = 0;
+	int ret = 0;
 	int irqval = 0;
 	u8 buf[7] = {0};
 	short value_x = 0;
@@ -187,12 +250,12 @@ static int ak09970_get_data(struct dhall_data_xyz *data)
 	}
 
 	msleep(35);
-
+	mutex_lock(&ak09970_getData_mutex);
 	/* (1) read data */
-	err = ak09970_i2c_read_block(g_chip, AK09970_REG_ST1_ZYX/*0x17*/, buf, sizeof(buf));
-	if (err < 0) {
-		TRI_KEY_LOG(" fail %d \n", err);
-		return err;
+	ret = ak09970_i2c_read_block(g_chip, AK09970_REG_ST1_ZYX/*0x17*/, buf, sizeof(buf));
+	if (ret < 0) {
+		TRI_KEY_LOG(" fail %d \n", ret);
+		goto OUT;
 	}
 
 	/* (2) collect data*/
@@ -202,17 +265,18 @@ static int ak09970_get_data(struct dhall_data_xyz *data)
 		value_y = (short)((u16)(buf[3] << 8) + buf[4]);
 		value_z = (short)((u16)(buf[1] << 8) + buf[2]);
 	} else {
-		TRI_KEY_LOG("ak09970 hall: st1(0x%02X%02X) is not DRDY.\n",  buf[0], buf[1]);
-		data->hall_x = value_x;
-		data->hall_y = value_y;
-		data->hall_z = value_z;
+		TRI_KEY_LOG("ak09970 hall:st1(0x%02X%02X) NO_DRDY.\n", buf[0], buf[1]);
+		TRI_KEY_LOG("ak09970 hall->[x:%d][y:%d][z:%d]\n", data->hall_x, data->hall_y, data->hall_z);
+		// data->hall_x = value_x;
+		// data->hall_y = value_y;
+		// data->hall_z = value_z;
 		data->st = st;
-		return err;
+		goto OUT;
 	}
-	err = ak09970_i2c_read_block(g_chip, AK09970_REG_ST1_V, buf, sizeof(buf));
-	if (err < 0) {
-		TRI_KEY_LOG(" ak09970_i2c_read_block AK09970_REG_ST1_V fail %d \n", err);
-		return err;
+	ret = ak09970_i2c_read_block(g_chip, AK09970_REG_ST1_V, buf, sizeof(buf));
+	if (ret < 0) {
+		TRI_KEY_LOG(" ak09970_i2c_read_block AK09970_REG_ST1_V fail %d \n", ret);
+		goto OUT;
 	}
 	if (buf[0] & 0x01) {
 		value_v = (long)(value_x * value_x) +(long)(value_y * value_y) + (long)(value_z * value_z);
@@ -229,7 +293,10 @@ static int ak09970_get_data(struct dhall_data_xyz *data)
 	TRI_KEY_LOG("new hall value is x %d, y %d, z %d v %d \n",
 			   value_x, value_y, value_z, data->hall_v);
 	TRI_KEY_LOG("%s  read irq is %d\n" , __func__, irqval);
-	return 0;
+
+OUT:
+	mutex_unlock(&ak09970_getData_mutex);
+	return ret;
 }
 
 static void ak09970_dump_reg(struct seq_file *s)
@@ -237,7 +304,7 @@ static void ak09970_dump_reg(struct seq_file *s)
 	int i = 0, err = 0;
 	int k = 0;
 	u8 val[20] = {0};
-	u8 buffer[2048] = {0};
+	u8 *buffer = NULL;
 	u8 _buf[20] = {0};
 	u8 reg[][2] = {
 		{ 0x10, 1},
@@ -265,6 +332,11 @@ static void ak09970_dump_reg(struct seq_file *s)
 	};
 	TRI_KEY_LOG("%s  enter\n" , __func__);
 
+	buffer = (u8 *)kzalloc(2048, GFP_KERNEL);
+	if (!buffer) {
+		seq_printf(s, "kzalloc error\n");
+		return;
+	}
 	for (k = 0; k < sizeof(reg) / sizeof(reg[0]); k++) {
 		TRI_KEY_LOG("%s:%d,%d,%d, enter\n" , __func__, k, reg[k][0], reg[k][1]);
 		memset(_buf, 0, sizeof(_buf));
@@ -274,6 +346,7 @@ static void ak09970_dump_reg(struct seq_file *s)
 			if (err < 0) {
 				TRI_KEY_LOG("read reg %d error\n", reg[k][0]);
 				seq_printf(s, "read reg %d error\n", reg[k][0]);
+				kfree(buffer);
 				return;
 			}
 			for (i = 0; i < reg[k][1]; i++) {
@@ -287,6 +360,7 @@ static void ak09970_dump_reg(struct seq_file *s)
 	}
 	TRI_KEY_LOG("%s\n", buffer);
 	seq_printf(s, "%s", buffer);
+	kfree(buffer);
 	return;
 }
 
@@ -613,7 +687,7 @@ static bool ak09970_update_threshold(int position, short lowthd, short highthd, 
 		vlow = halldata->hall_v + XBRP_TOL;
 		vhigh = halldata->hall_v + XBOP_TOL;
 		ak09970_inttobuff(vth, vlow, vhigh);
-		TRI_KEY_LOG("DOWN_STATE xlow=%d,xhigh=%d, ylow=%d,yhigh=%d, vlow=%d, vhigh = %d\n", lowthd, highthd, second_low, second_high, vlow, vhigh);
+		TRI_KEY_LOG("MID_STATE xlow=%d,xhigh=%d, ylow=%d,yhigh=%d, vlow=%d, vhigh = %d\n", lowthd, highthd, second_low, second_high, vlow, vhigh);
 		err = ak09970_i2c_write_block(g_chip, AK09970_REG_SWX1+3, vth, 4);
 		if (err < 0) {
 			TRI_KEY_LOG("%s: clear AK09970_REG_SWX1 fail %d \n", __func__, err);
@@ -851,7 +925,7 @@ static int ak09970_reset_device(struct oplus_dhall_chip *chip)
 	return err;
 }
 
-static void ak09970_parse_dts(struct oplus_dhall_chip *chip)
+static void ak09970_parse_dts(struct oplus_dhall_chip *chip, struct extcon_dev_data *hall_dev)
 {
 	struct device_node *np = NULL;
 	int rc = 0;
@@ -910,6 +984,38 @@ static void ak09970_parse_dts(struct oplus_dhall_chip *chip)
 	} else {
 		chip->is_turn_upside_down = false;
 	}
+	chip->fpga_trans_support = of_property_read_bool(np, "fpga_trans_support");
+	if (chip->fpga_trans_support) {
+		TRI_KEY_LOG("Supports fpga transmit.\n");
+	} else {
+		chip->fpga_trans_support = false;
+	}
+
+	hall_dev->secondry_panel_notify = of_property_read_bool(np, "secondry_panel_notify");
+	TRI_KEY_LOG("%s:secondry_panel_notify:%d\n", __func__, hall_dev->secondry_panel_notify);
+}
+
+static int ak09970_communicate_test(void)
+{
+	u8 buf[4] = {0};
+	int ret = -1;
+	if (g_chip == NULL) {
+		TRI_KEY_ERR("ak09970 == NULL");
+		return ret;
+	}
+	ret = ak09970_i2c_read_block(g_chip, ak09970_REG_PERSINT, buf, sizeof(buf));
+	if (ret < 0) {
+		TRI_KEY_LOG(" fail %d \n", ret);
+		return ret;
+	}
+	if ((buf[0] == ak09970_COMPANY_ID) && (buf[1] == ak09970_DEVICE_ID)) {
+		ret = 0;
+	} else {
+		ret = -1;
+		TRI_KEY_ERR("current device id(0x%02X), company id(0x%02X)", buf[0], buf[1]);
+	}
+
+	return ret;
 }
 
 static struct dhall_operations  ak09970_ops = {
@@ -923,16 +1029,57 @@ static struct dhall_operations  ak09970_ops = {
 	.is_power_on = ak09970_is_power_on,
 	.set_sensitivity = ak09970_set_sensitivity,
 	.get_threeaxis_data  = ak09970_get_data,
+	.communicate_test = ak09970_communicate_test,
 };
 
+#if IS_ENABLED(CONFIG_DRM_OPLUS_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
+int register_panel_notifier(struct extcon_dev_data *hall_dev, struct oplus_dhall_chip *chip, int panel_id)
+{
+	int retry = 0;
+
+	for(retry = 0; retry < MAX_RETRY_PANEL; retry++) {
+		switch (panel_id) {
+		case PRIMARY_PANEL:
+			hall_dev->active_panel = trikey_dev_get_panel(chip->client->dev.of_node, PRIMARY_PANEL);
+			break;
+		case SECONDARY_PANEL:
+			hall_dev->active_panel_sec = trikey_dev_get_panel(chip->client->dev.of_node, SECONDARY_PANEL);
+			break;
+		default:
+			hall_dev->active_panel = trikey_dev_get_panel(chip->client->dev.of_node, PRIMARY_PANEL);
+			break;
+		}
+
+		if (hall_dev->active_panel) {
+			TRI_KEY_ERR("Success to get panel for panelID[%d]\n", panel_id);
+			break;
+		}
+		msleep(500);
+	}
+
+	if (retry == MAX_RETRY_PANEL) {
+		TRI_KEY_ERR("ts check panel dt failed\n");
+		if (hall_dev) {
+			kfree(hall_dev);
+			hall_dev = NULL;
+		}
+		return -EPROBE_DEFER; /* retry */
+	}
+
+	return 0;
+}
+
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
+static int ak09970_i2c_probe(struct i2c_client *client)
+#else
 static int ak09970_i2c_probe(struct i2c_client *client, const struct i2c_device_id *id)
+#endif
 {
 	struct oplus_dhall_chip *chip = NULL;
 	struct extcon_dev_data	*hall_dev = NULL;
 	int err = 0;
-#if IS_ENABLED(CONFIG_DRM_OPLUS_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
-	u8 retry;
-#endif
 
 	TRI_KEY_LOG("call \n");
 
@@ -957,27 +1104,18 @@ static int ak09970_i2c_probe(struct i2c_client *client, const struct i2c_device_
 	hall_dev->client = client;
 	i2c_set_clientdata(client, hall_dev);
 	hall_dev->dev = &client->dev;
-	ak09970_parse_dts(chip);
+	ak09970_parse_dts(chip, hall_dev);
 
 /* ts check panel dt */
 #if IS_ENABLED(CONFIG_DRM_OPLUS_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
-	/* get spi of_node from spi_register_driver */
-	for(retry = 0; retry < 10; retry++) {
-		hall_dev->active_panel = trikey_dev_get_panel(chip->client->dev.of_node);
-		if (hall_dev->active_panel) {
-			TRI_KEY_ERR("Success to get panel info\n");
-			break;
-		}
-		msleep(500);
+	err = register_panel_notifier(hall_dev, chip, PRIMARY_PANEL);
+	if (err == (-EPROBE_DEFER)) {
+		return err; /* retry */
 	}
 
-	if (retry == 10) {
-		TRI_KEY_ERR("ts check panel dt failed\n");
-		if (hall_dev) {
-			kfree(hall_dev);
-			hall_dev = NULL;
-		}
-		return -EPROBE_DEFER; /* retry */
+	if (hall_dev->secondry_panel_notify) {
+		TRI_KEY_LOG("need register secondry panel notifier\n");
+		register_panel_notifier(hall_dev, chip, SECONDARY_PANEL);
 	}
 #endif
 	if (!IS_ERR_OR_NULL(chip->pctrl) && !IS_ERR_OR_NULL(chip->irq_state)) {
@@ -993,12 +1131,18 @@ static int ak09970_i2c_probe(struct i2c_client *client, const struct i2c_device_
 	err = ak09970_reset_device(chip);
 	if (err < 0) {
 		TRI_KEY_LOG("ak09970_reset_device fail \n");
+		if (chip->fpga_trans_support) {
+			TRI_KEY_LOG("wait for porbe again...\n");
+			return -EPROBE_DEFER;
+		}
+	}
+	if (err < 0) {
 		goto fail;
 	}
 
 	err = ak09970_setup_eint(chip);
 	if (err < 0) {
-		TRI_KEY_LOG("ak09970_setup_eint failed, %d\n", chip->id);
+		TRI_KEY_LOG("ak09970_setup_eint failed.\n");
 		goto fail;
 	}
 

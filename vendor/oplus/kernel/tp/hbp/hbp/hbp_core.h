@@ -13,9 +13,15 @@
 #include "hbp_frame.h"
 #include "hbp_power.h"
 #include "hbp_exception.h"
+#include "hbp_healthinfo.h"
 
 #if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY)
 #include <linux/soc/qcom/panel_event_notifier.h>
+#endif
+
+#if defined PAGE_SIZE
+#undef PAGE_SIZE
+#define PAGE_SIZE 8192
 #endif
 
 #define MAX_DEVICES 2
@@ -28,6 +34,8 @@
 
 #define DRIVER_SYNC_TIMEOUT 50
 #define DAEMON_ACK_TIMEOUT 1000
+
+#define FP_FRAME_TIME 10
 
 #define HBP_CORE "hbp_core"
 #define HBP_STATAS "hbp-sts"
@@ -46,6 +54,10 @@
 
 #define SMART_GESTURE_THRESHOLD 0x0A
 #define SMART_GESTURE_LOW_VALUE 0x05
+
+#define FP_GRIP_ENABLE           1
+#define FP_GRIP_DISABLE_TIMEOUT  2
+#define FP_GRIP_DISABLE          0
 
 /* bit operation */
 #define SET_BIT(data, flag) ((data) |= (flag))
@@ -90,7 +102,7 @@ struct device_info {
 };
 
 union usr_data {
-	int32_t val;
+	int64_t val;
 
 	struct {
 		void __user *tx;
@@ -107,9 +119,29 @@ union usr_data {
 		uint8_t state;
 		int x;
 		int y;
+		int touch_early_down_flag;
+		long is_touch_fp_area_Cnt;
+		int tp_firmware_time;
 	} ifp;
 
 	struct power_sequeue sq[MAX_POWER_SEQ];
+
+	struct {
+		uint8_t mode;
+		uint8_t bits_per_word;
+		int speed;
+	} spi_setup;
+
+	struct {
+		bool filmed;
+		int level;
+		bool trusty;
+	} film;
+
+	struct {
+		void __user *info;
+		size_t info_size;
+	} health_info;
 };
 
 struct chip_info {
@@ -174,7 +206,10 @@ enum gesture_type {
 	SingleTap,
 	Heart,
 	PenDetect,
-	SGesture
+	SGesture,
+	FingerprintEarlyDown,
+	FP_GESTURE_HOLD,
+	FP_GESTURE_RELEASE,
 };
 
 struct point_info {
@@ -200,12 +235,15 @@ struct gesture_info {
 	struct Coordinate Point_3rd;
 	struct Coordinate Point_4th;
 	uint8_t id;
+	int tp_firmware_time;
 };
 
 struct dev_operations {
 	int (*spi_write)(void *priv, void *tx, int32_t len);
 	int (*spi_read)(void *priv, char *rx, int32_t len);
 	int (*spi_sync)(void *priv, char *tx, char *rx, int32_t len);
+	int (*spi_set_para)(void *priv, uint8_t mode, uint8_t bits_per_word, int speed);
+	int (*spi_get_para)(void *priv, uint8_t *mode, uint8_t *bits_per_word, int *speed);
 	int (*get_frame)(void *priv, uint8_t *buf, uint32_t size);
 	int (*get_gesture)(void *priv, struct gesture_info *gesture);
 	int (*get_touch_points)(void *priv, struct point_info *points);
@@ -228,6 +266,11 @@ struct hbp_device {
 	int id;
 	struct panel_hw hw;
 	uint16_t state;
+	int errReason;
+
+	/*spi write or read buffer*/
+	char *_wr;
+	char *_rd;
 
 	int irq;
 	uint32_t irq_flags;
@@ -244,7 +287,15 @@ struct hbp_device {
 	struct wait_queue_head drv_event;
 	int drv_ack;
 
+	/*fp*/
+	int pre_fpstate;
 	bool screenoff_ifp;
+
+	int touch_early_down_flag;
+	long is_touch_fp_area_cnt;
+	ktime_t touch_fp_area_time;
+	ktime_t fp_down_time;
+
 	struct frame_queue frame_queue;
 
 	/*callback from panel*/
@@ -261,12 +312,26 @@ struct hbp_device {
 #endif
 
 	struct debug_cfg debug;
+	struct monitor_data monitor_data;
 
 	bool up_status;
 	int touch_report_num;
 	int last_width_major;
 	int last_touch_major;
 	int irq_slot;           /*debug use, for print all finger's first touch log*/
+
+	/*feature*/
+	bool frame_insert_support;
+	union touch_time top_irq_frame_tv;
+
+	bool pen_support;
+	bool create_with_power_on_support;
+	char clk_name[16];
+	struct clk *pen_ck;
+	/* edge grip for fingerprint */
+	bool fp_grip_support;
+	bool fp_grip_hold;
+	int fp_grip_enable;
 };
 
 struct device_state {
@@ -326,7 +391,8 @@ extern int hbp_register_devices(void *priv,
 extern int hbp_unregister_devices(void *priv);
 extern bool match_from_cmdline(struct device *dev, struct chip_info *info);
 extern void hbp_set_irq_wake(struct hbp_device *hbp_dev, bool wake);
-
+extern void hbp_dev_power_type_ctrl(void *priv, enum power_type type, bool en);
+extern void hbp_dev_healthinfo_report(void *priv, char *report);
 /*
 #if 1
 request_firmware_select()

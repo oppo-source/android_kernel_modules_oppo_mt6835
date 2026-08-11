@@ -24,6 +24,7 @@
 struct gtx8_tool_info {
 	u8     devicecount;
 	bool   esd_handle_support;            /*esd handle support feature*/
+	bool   is_fpga_support;               /*fpga support feature*/
 	int    *is_suspended;
 	void   *chip_data;
 	int irq;

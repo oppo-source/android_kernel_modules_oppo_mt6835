@@ -3798,7 +3798,7 @@ static int sc8547d_driver_probe(struct i2c_client *client,
 		rc = sc8547_charger_choose(chip);
 		if (rc <= 0) {
 			chg_err("choose error, rc=%d\n", rc);
-			goto regmap_init_err;
+			goto reg_voocphy_err;
 		}
 
 		voocphy->ops = &oplus_sc8547_ops;
@@ -3812,7 +3812,7 @@ static int sc8547d_driver_probe(struct i2c_client *client,
 		rc = sc8547_slave_charger_choose(chip);
 		if (rc <= 0) {
 			chg_err("slave cp choose error, rc=%d\n", rc);
-			goto regmap_init_err;
+			goto reg_voocphy_err;
 		}
 		if (!sc8547d_hw_version_check(chip)) {
 			chg_err("not sc8547d\n");
@@ -3882,6 +3882,10 @@ irq_reg_err:
 		ufcs_device_unregister(chip->ufcs);
 reg_ufcs_err:
 reg_voocphy_err:
+	if (chip->chip_ws)
+		wakeup_source_unregister(chip->chip_ws);
+	device_remove_file(&client->dev, &dev_attr_registers);
+	device_remove_file(&client->dev, &dev_attr_track_reg);
 regmap_init_err:
 parse_dt_err:
 	devm_kfree(&client->dev, voocphy);

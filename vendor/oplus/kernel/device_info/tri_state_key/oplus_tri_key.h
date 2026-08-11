@@ -49,6 +49,10 @@
 #define THREEAXIS_POSITION_YTOLEN 5000
 #define DEFAULT_UP_X 3000
 #define DEFAULT_DOWN_X 3000
+#define PAGESIZE 128
+
+#define TEST_RST_OK			0
+#define TEST_RST_NG			1
 
 #define TRIKEY_FB_INTERF_TYPE       "10001"
 #define TRIKEY_FB_BUS_TRANS_TYPE    "10002"
@@ -165,6 +169,7 @@ struct dhall_operations {
 	int (*offect_data_handle)(int offect);
 	int (*get_threeaxis_data)(struct dhall_data_xyz *data);
 	bool (*update_threeaxis_threshold)(int position, short lowthd, short highthd, struct dhall_data_xyz *data, int interf);
+	int (*communicate_test)(void);
 };
 
 struct extcon_dev_data {
@@ -208,6 +213,7 @@ struct extcon_dev_data {
 	char        data_offect_name[8];
 	int         threeaxis_calib_data[9];
 	bool        threeaxis_hall_support;
+	bool        secondry_panel_notify;
 	bool        enable_esd_check;
 	bool        new_threshold_support; /*add for vip mode for new threshold*/
 	bool        updown_to_mid_support; /*add up to (mid of down and mid) support*/
@@ -226,17 +232,25 @@ struct extcon_dev_data {
 	int         position_tolen[2];
 	int         default_up_xdata;
 	int         default_down_xdata;
+	int         communicate_test_cnt;
 	bool        bus_ready;              /*spi or i2c resume status*/
 	bool        is_suspended;
 	bool        turn_upside_down_support;
 	bool        new_posupdate_support;
+	bool        deformation_interference_support;
+	int         deformation_interference[4];
+	int         deformation_interference_x[6];
+	int         deformation_interference_y[6];
 	/* framebuffer callbacks notifier */
 #if IS_ENABLED(CONFIG_DRM_OPLUS_PANEL_NOTIFY)
 	struct drm_panel *active_panel;
+	struct drm_panel *active_panel_sec;
 	struct notifier_block fb_notif; /*register to control suspend/resume*/
 #elif IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
 	struct drm_panel *active_panel;
+	struct drm_panel *active_panel_sec;
 	void *notifier_cookie;
+	void *notifier_cookie_sec;
 #elif IS_ENABLED(CONFIG_OPLUS_MTK_DRM_GKI_NOTIFY)
 	struct notifier_block disp_notifier;
 #elif IS_ENABLED(CONFIG_DRM_MSM) || IS_ENABLED(CONFIG_DRM_OPLUS_NOTIFY) \
@@ -271,6 +285,6 @@ extern int aw8697_op_haptic_stop(void);
 
 extern int oplus_hall_register_notifier(void);
 extern int oplus_hall_unregister_notifier(void);
-extern struct drm_panel *trikey_dev_get_panel(struct device_node *of_node);
+extern struct drm_panel *trikey_dev_get_panel(struct device_node *of_node, int panel_id);
 
 #endif /* __TRIKEY_H__ */

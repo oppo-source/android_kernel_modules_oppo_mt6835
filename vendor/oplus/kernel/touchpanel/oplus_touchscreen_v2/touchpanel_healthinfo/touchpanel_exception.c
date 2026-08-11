@@ -150,12 +150,17 @@ int tp_exception_report(void *tp_exception_data, tp_excep_type excep_tpye, void 
 	exception_data->exception_upload_count++;
 	switch (excep_tpye) {
 	case EXCEP_BUS:
-		/*bus error upload tow times*/
-		exception_data->bus_error_upload_count++;
 		if (exception_data->bus_error_count > MAX_BUS_ERROR_COUNT
-				&& exception_data->bus_error_upload_count < 3) {
-			exception_data->bus_error_count = 0;
+				&& exception_data->bus_error_upload_count < MAX_BUS_ERROR_UPLOAD_COUNT) {
 			ret = tp_olc_raise_exception(excep_tpye, summary, summary_size);
+			/*bus error upload tow times*/
+			exception_data->bus_error_upload_count++;
+		}
+		break;
+	case EXCEP_BUS_READY:
+		if (exception_data->bus_ready_upload_count < MAX_BUS_READY_UPLOAD_COUNT) {
+			ret = tp_olc_raise_exception(excep_tpye, summary, summary_size);
+			exception_data->bus_ready_upload_count++;
 		}
 		break;
 	default:

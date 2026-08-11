@@ -9,10 +9,12 @@
  --------   ---        ----------------------------------------------------------
  06/24/21   Yang.Wang   Created file
 =============================================================================*/
+#include <linux/version.h>
 #include <linux/kobject.h>
 #include <linux/string.h>
 #include <linux/err.h>
 #include <linux/module.h>
+#include <linux/errno.h>
 #include "oplus_pmic_info_mtk.h"
 
 /**********************************************
@@ -369,7 +371,11 @@ void mt6359_pmic_show(struct PMICHistoryKernelStruct *pmic_history_ptr, char pag
 
 static ssize_t pmic_monitor_show(struct kobject *kobj,
 	struct kobj_attribute *attr, char *buf) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 	char page[2048] = {0};
+#else
+	char *page = kzalloc(2048,  GFP_KERNEL);
+#endif
 	int len = 0;
 	struct PMICHistoryKernelStruct *pmic_history_ptr = NULL;
 	u64 pmic_history_count=0;
@@ -379,6 +385,9 @@ static ssize_t pmic_monitor_show(struct kobject *kobj,
 	if (NULL == pmic_history_ptr) {
 		len += snprintf(&page[len],512-len, "PMIC|0|0x00|0x0000|NULL\n");
 		memcpy(buf,page,len);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+		kfree(page);
+#endif
 		return len;
 	}
 
@@ -402,10 +411,15 @@ static ssize_t pmic_monitor_show(struct kobject *kobj,
 	}
 
 	memcpy(buf,page,len);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	 kfree(page);
+#endif
 	return len;
 
 }
 pmic_info_attr_ro(pmic_monitor);
+/**********************************************/
 
 #define PON_PWRKEY   0x01
 #define PON_CHARIN   0x04
@@ -441,10 +455,45 @@ static ssize_t batt_remove_show(struct kobject *kobj,
 }
 
 pmic_info_attr_ro(batt_remove);
+
+/**********************************************/
+static ssize_t uvlo_state_show(struct kobject *kobj,
+	struct kobj_attribute *attr, char *buf) {
+        struct PMICHistoryKernelStruct *pmic_history_ptr = NULL;
+        struct PMICRecordKernelStruct pmic_first_record={0};
+	struct PMICRegStruct pmic_reg_value = {0};
+	u64 pmic_history_count=0;
+	unsigned int uvlo_state=0;
+
+        pmic_history_ptr = (struct PMICHistoryKernelStruct *)get_pmic_history();
+
+        if (NULL == pmic_history_ptr) {
+		return sprintf(buf, "%x\n", uvlo_state);
+        }
+	pmic_history_count = pmic_history_ptr->log_count;
+	printk(KERN_INFO "pmic_history_count = %llu\n",pmic_history_count);
+
+	if (pmic_history_count >= 1) {
+		pmic_first_record = pmic_history_ptr->pmic_record[pmic_history_count-1];   // last record
+		pmic_reg_value = pmic_first_record.pmic_pon_poff_reason[0];
+		if (DATA_VALID_FLAG != pmic_reg_value.data_is_valid) {
+			return sprintf(buf, "%x\n", uvlo_state);
+		} else if (pmic_reg_value.oplus_uvlo_flag) {
+			uvlo_state = 1;
+			return sprintf(buf, "%x\n", uvlo_state);
+		} else {
+			return sprintf(buf, "%x\n", uvlo_state);
+		}
+	} else {
+		return sprintf(buf, "%x\n", uvlo_state);
+	}
+}
+pmic_info_attr_ro(uvlo_state);
 /**********************************************/
 
 static struct attribute * g[] = {
 	&pmic_monitor_attr.attr,
+	&uvlo_state_attr.attr,
 	&batt_remove_attr.attr,
 	NULL,
 };

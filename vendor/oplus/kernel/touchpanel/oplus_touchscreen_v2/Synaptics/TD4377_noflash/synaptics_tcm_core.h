@@ -37,8 +37,9 @@
 #define SYNAPTICS_TCM_ID_PRODUCT (1 << 0)
 #define SYNAPTICS_TCM_ID_VERSION 0x0007
 
-#define RD_CHUNK_SIZE 0 /* read length limit in bytes, 0 = unlimited */
-#define WR_CHUNK_SIZE 1024 /* write length limit in bytes, 0 = unlimited */
+#define RD_CHUNK_SIZE 512 /* read length limit in bytes, 0 = unlimited */
+#define WR_CHUNK_SIZE 2049 /* write length limit in bytes, 0 = unlimited */
+#define WR_CHUNK_LENGHT 513
 
 #define MESSAGE_HEADER_SIZE 4
 #define MESSAGE_MARKER 0xa5
@@ -65,10 +66,18 @@
 		} \
 	} while (0)
 
+#ifdef MAX
+#undef MAX
+#endif
+
 #define MAX(a, b) \
 	({__typeof__(a) _a = (a); \
 	__typeof__(b) _b = (b); \
 	_a > _b ? _a : _b; })
+
+#ifdef MIN
+#undef MIN
+#endif
 
 #define MIN(a, b) \
 	({__typeof__(a) _a = (a); \
@@ -232,12 +241,10 @@ enum dynamic_config_id {
 	DC_HEADSET_MODE_ENABLED = 0xD1,
 	DC_FREQUENCE_HOPPING = 0xD2,
 	DC_SET_REPORT_FRE = 0x11,
-	DC_GESTURE_MASK   = 0xFE,
 	DC_GLOVE_MODE_ENABLED = 0x0D,
 	DC_GLOVE_MODE_STATE = 0xF5,
+	DC_GESTURE_MASK   = 0xFE,
 	DC_LOW_TEMP_ENABLE = 0xFD,
-	DC_WATERPROOF_ENABLE = 0xFC,
-	DC_UNDER_WATER = 0xF6,
 };
 
 enum command {
@@ -526,6 +533,7 @@ struct syna_tcm_hcd {
 	int *in_suspend;
 	int block_delay_us;
 	int byte_delay_us;
+	int esd_irq_disabled;
 	int rmidev_major_num;
 	struct spi_bus_data spi_data;
 
@@ -751,7 +759,8 @@ static inline int syna_tcm_realloc_mem(struct syna_tcm_hcd *tcm_hcd,
 		if (!(buffer->buf)) {
 			TPD_INFO("%s: Failed to allocate memory\n",
 				 __func__);
-			buffer->buf = temp;
+			kfree(temp);
+			buffer->buf_size = 0;
 			return -ENOMEM;
 		}
 

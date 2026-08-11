@@ -35,8 +35,9 @@
 #define PDE_DATA pde_data
 #endif
 
+
 #define TP_SUPPORT_MAX 3
-#define TP_NAME_SIZE_MAX 25
+#define TP_NAME_SIZE_MAX 30
 
 #define TP_MSG_SIZE_MAX 32
 
@@ -70,7 +71,21 @@
 #define HEART			17
 #define S_GESTURE		18 /* new project not use this gesture type*/
 #define PENDETECT		18
+
+/* gesture type for fingerprint start */
+#define FP_GESTURE_HOLD     19
+#define FP_GESTURE_RELEASE  20
+/* gesture type for fingerprint end */
+
 #define WATERPROOF_RUS_BIT	7
+
+#define TEST_RST_OK		0
+#define TEST_RST_NG		1
+#define TEST_RST_WAIT		2
+
+#define TEST_COMPLETE		0
+#define TEST_RUNNING		1
+#define TEST_NOSTART		3
 
 #define HEALTH_REPORT_GRIP          "grip_report"
 #define HEALTH_REPORT_BASELINE_ERR  "baseline_err"
@@ -91,7 +106,8 @@
 #define HEALTH_REPORT_RST_WD        "wd_rst"
 #define HEALTH_REPORT_RST_OTHER     "other_rst"
 #define HEALTH_REPORT_GLOVE_ENTER	"glove_enterTimes"
-#define HEALTH_REPORT_BASELINE_NEGATIVE  "baseline_negative"
+#define HEALTH_REPORT_FW_FD			"firmware_fd"
+#define HEALTH_REPORT_WATER_LEVEL   "water_level"
 
 #define FINGERPRINT_DOWN_DETECT 0X0f
 #define FINGERPRINT_UP_DETECT 0X1f
@@ -123,6 +139,7 @@
 
 #define SMOOTH_LEVEL_NUM            6
 #define SENSITIVE_LEVEL_NUM         6
+#define CLICK_SENSITIVE_LEVEL_NUM   6
 
 #define PINCTRL_STATE_SPI_ACTIVE    "oplus_spi_active"
 #define PINCTRL_STATE_INT_ACTIVE    "oplus_int_active"
@@ -145,6 +162,8 @@
 #define REPORT_RATE_GAME_300    300
 #define REPORT_RATE_GAME_600    600
 
+#define REPORT_RATE_MAX_TEST_TIME_S    20
+
 #ifdef TP_ALL_GESTURE_SUPPORT
 #undef TP_ALL_GESTURE_SUPPORT
 #endif
@@ -153,10 +172,14 @@
 #undef TP_ALL_GESTURE_ENABLE
 #endif
 
+#define FP_GRIP_TAG "[fingerprint grip]"
+#define FP_GRIP_ENABLE  0x01 /* 0001 */
+#define FP_GRIP_DISABLE 0x02 /* 0010 */
+
 #define TP_ALL_GESTURE_SUPPORT \
-	(ts->black_gesture_support || ts->fingerprint_underscreen_support)
+	(ts->black_gesture_support || ts->fingerprint_underscreen_support || ts->fp_grip_support)
 #define TP_ALL_GESTURE_ENABLE  \
-	((ts->gesture_enable & 0x01) == 1 || ts->fp_enable)
+	((ts->gesture_enable & 0x01) == 1 || ts->fp_enable || (ts->fp_grip_enable & FP_GRIP_ENABLE))
 
 /* input_dev vendor/product info*/
 #define SYNAPTICS    0x0901
@@ -175,13 +198,35 @@
 #define ABS_TOUCH_COST_TIME_DAEMON  0x23
 #define MAX_TOUCH_COST_TIME         1000 * 1000
 
+#define SCEN_SINGLE_CMD_SIZE        (64)
+#define SCEN_ALL_CMD_SIZE           (8192)
+#define MAX_SCENE_LENS              5
+typedef enum {
+	SCREEN_LOCK_MODE = 0,
+	SENSITIVE_LEVEL,
+	SET_PACKAGE_TYPE,
+	PEN_SENSITIVE_LEVEL,
+	TOUCH_LEAVE_JITTER,
+} scene_type;
+
+static const char buffer_scen[MAX_SCENE_LENS][SCEN_SINGLE_CMD_SIZE] = { \
+	"screen_lock_mode", \
+	"sensitive_level", \
+	"set_package_type", \
+	"pen_sensitive_level", \
+	"touch_leave_jitter" \
+};
+
 #define NOTIFY_TIME_OUT             60
 
 #define MAX_TEMPERATURE             70
 #define MIN_TEMPERATURE             -40
 
+#define MAX_SUSPEND_TASK_DUMP_COUNT 3
 #define MAX_AIUNIT_GET_NUM          30
 #define MAX_AIUNIT_SET_NUM          7
+
+#define MAX_REPORT_FRAME_TEST_FRAME 100
 /*********PART3:Struct Area**********************/
 typedef enum {
 	TYPE_ONCELL = 0,   /*such as synaptic s3706*/
@@ -203,6 +248,7 @@ typedef enum {
 	MODE_EDGE,
 	MODE_GESTURE,
 	MODE_GLOVE,
+	MODE_RAINSTORM,
 	MODE_CHARGE,
 	MODE_GAME,
 	MODE_PALM_REJECTION,
@@ -214,9 +260,7 @@ typedef enum {
 	MODE_PALM_TO_SLEEP,
 	MODE_WATERPROOF,
 	MODE_LEATHER_COVER,
-	MODE_AOD,
-	MODE_UNDERWATER,
-	MODE_RAINSTORM,
+	MODE_INCELL_AOD,
 } work_mode;
 
 typedef enum {
@@ -240,16 +284,6 @@ typedef enum {
 	FW_NORMAL,     /*fw might update, depend on the fw id*/
 	FW_ABNORMAL,   /*fw abnormal, need update*/
 } fw_check_state;
-
-/******For Game Hot Zone******/
-struct tp_aiunit_game_info {
-	u8  gametype;
-	u8  aiunit_game_type;
-	u16 left;
-	u16 top;
-	u16 right;
-	u16 bottom;
-};
 
 typedef enum {
 	FW_UPDATE_SUCCESS,
@@ -348,7 +382,8 @@ typedef enum lcd_event_type {
 	LCD_CTL_CS_OFF,
 	LCD_CTL_IRQ_ON,
 	LCD_CTL_IRQ_OFF,
-	LCD_CTL_AOD_OFF = 0x30,
+	LCD_CTL_AOD_OFF,
+	LCD_CTL_AOD_ON,
 } lcd_event_type;
 
 typedef enum {
@@ -488,6 +523,24 @@ typedef enum {
 	FP_NODE_FOR_LSI = 2,/*for LSI touch fp_enable node*/
 	FP_QUICK_START_ON = 3,/*for fingerprint quick start featrue*/
 } fp_node_value;
+
+/******For Game Hot Zone******/
+struct tp_aiunit_game_info {
+	u8  gametype;
+	u8  aiunit_game_type;
+	u16 left;
+	u16 top;
+	u16 right;
+	u16 bottom;
+};
+
+/******For Long Strip Abnormal Detect******/
+struct long_strip_abnormal_detect_info {
+	u8  channels_max_thd;
+	u8  er_max;
+	u8  er_min;
+	u16 center_width;
+};
 
 /******For HW resource area********/
 struct panel_info {
@@ -647,6 +700,40 @@ typedef enum {
 	HEALTH_SIMULATE_BIT_IC_HEALTHINFO = 5,
 	HEALTH_SIMULATE_BIT_FW_UPDATE,
 } health_simulate_bit;
+
+typedef enum {
+	REPORT_FPS_DEFAULT = 0,
+	REPORT_FPS_60HZ,
+	REPORT_FPS_125HZ,
+	REPORT_FPS_180HZ,
+	REPORT_FPS_240HZ,
+	REPORT_FPS_288Hz, /* actually 300hz */
+	REPORT_FPS_360HZ,
+	REPORT_FPS_720HZ,
+	REPORT_FPS_70HZ,
+	REPORT_FPS_140HZ,
+	REPORT_FPS_140HZ_INSERT,
+	REPORT_FPS_250HZ_INSERT,
+	REPORT_FPS_144HZ, /* actually 150hz */
+	REPORT_FPS_165HZ, /* actually 173hz */
+	REPORT_FPS_330HZ, /* actually 347hz */
+	REPORT_FPS_90HZ,
+	REPORT_FPS_180HZ_INSERT,
+	REPORT_FPS_RATE_70  = 70,
+	REPORT_FPS_RATE_120 = 120,
+	REPORT_FPS_RATE_140 = 140,
+	REPORT_FPS_RATE_140_INSERT = 141,
+	REPORT_FPS_RATE_144 = 144,
+	REPORT_FPS_RATE_180 = 180,
+	REPORT_FPS_RATE_180_INSERT = 181,
+	REPORT_FPS_RATE_240 = 240,
+	REPORT_FPS_RATE_240_INSERT = 241,
+	REPORT_FPS_RATE_288 = 288,
+	REPORT_FPS_RATE_300 = 300,
+	REPORT_FPS_RATE_360 = 360,
+	REPORT_FPS_RATE_600 = 600,
+	REPORT_FPS_RATE_720 = 720,
+} ReportFps;
 
 struct point_state_monitor {
 	u64 time_counter;
@@ -840,6 +927,7 @@ struct monitor_data {
 
 	u32 smooth_level_chosen;
 	u32 sensitive_level_chosen;
+	u32 click_sensitive_level_chosen;
 	int RATE_MIN;
 	int below_rate_counts;
 	tp_rate tp_rate_type;
@@ -868,13 +956,18 @@ struct monitor_data {
 
 	struct finger_health_info *p_finger_health_info;
 };
-#define MAX_BUS_ERROR_COUNT 30
+
+#define MAX_BUS_ERROR_COUNT         10
+#define MAX_BUS_ERROR_UPLOAD_COUNT  2
+#define MAX_BUS_READY_UPLOAD_COUNT  3
+
 struct exception_data {
 	void  *chip_data; /*debug info data*/
 	bool exception_upload_support;
 	u32 exception_upload_count;
 	u32 bus_error_count;
 	u32 bus_error_upload_count;
+	u32 bus_ready_upload_count;
 };
 
 struct com_api_data {
@@ -969,6 +1062,14 @@ struct touchpanel_last_x_y_point {
 	uint16_t y;
 };
 
+struct touch_scene_info {
+	uint16_t  screen_lock_mode;
+	uint16_t  sensitive_level;
+	uint16_t  set_package_type;
+	uint16_t  pen_sensitive_level;
+	uint16_t  touch_leave_jitter;
+};
+
 struct aging_test_proc_operations;
 struct debug_info_proc_operations;
 struct touchpanel_data {
@@ -976,6 +1077,7 @@ struct touchpanel_data {
 	bool register_is_16bit;                             /*register is 16bit*/
 	bool glove_mode_support;                            /*glove_mode support feature*/
 	bool glove_mode_v2_support;                         /*glove_mode support feature*/
+	bool rainstorm_mode_v2_support;                     /*rainstorm_mode support feature*/
 	bool leather_cover_mode_support;                    /*leather_cover support feature*/
 	bool black_gesture_support;                         /*black_gesture support feature*/
 	bool black_gesture_indep_support;                   /*black_gesture indep control support feature*/
@@ -983,13 +1085,16 @@ struct touchpanel_data {
 	bool wireless_charger_support;                      /*wireless_charger support feature*/
 	bool headset_pump_support;                          /*headset_pump support feature*/
 	bool fw_edge_limit_support;                         /*edge_limit by FW support feature*/
+	bool report_rate_v2_support;                         /*report rate support feature*/
 	bool esd_handle_support;                            /*esd handle support feature*/
 	bool gesture_test_support;                          /*indicate test black gesture or not*/
 	bool game_switch_support;                           /*indicate game switch support or not*/
+	bool game_enable_in_tddi_support;                   /*send game cmd to tddi support feature*/
 	bool face_detect_support;                           /*touch porximity function*/
 	bool fingerprint_underscreen_support;               /*fingerprint underscreen support*/
 	bool fingerprint_not_report_in_suspend;             /*fingerprint not report in suspending*/
 	bool fingerprint_error_report_support;              /*fingerprint error report support*/
+	bool water_level_report_support;                    /*water level report support*/
 	bool sec_long_low_trigger;                          /*samsung s6d7ate ic int feature*/
 	bool suspend_gesture_cfg;
 	bool auto_test_force_pass_support;                  /*auto test force pass in early project*/
@@ -1016,26 +1121,32 @@ struct touchpanel_data {
 	bool exception_upload_support;
 	bool report_rate_support;                           /*feature used to calculate report rate*/
 	bool major_rate_limit_support;                      /*feature used to major report rate limit*/
+	bool touchz_to_pressure_support;                    /*feature used to report touchZ to Pressure */
 	bool palm_to_sleep_support;                         /*feature used to sleep when device trigger palm gesture in screen lock*/
 	bool tp_data_record_support;                        /*feature used to data record when get tp log*/
 	bool suspend_work_support;                          /*feature used to support suspend work queue*/
 	int glove_enable;                                   /*control state of glove gesture*/
+	int rainstorm_enable;                               /*control state of rainstorm mode*/
 	int pocket_prevent_mode;
-	bool touch_event_diasble;                           /*diasble touch event report*/
 	int leather_cover_enable;                           /*control state of leather_cover gesture*/
 	bool force_bus_ready_support;                       /*force bus ready to true afer notify*/
 	bool skip_reinit_device_support;                    /*spi need skip complete_all, prevent error in access reg*/
 	bool edge_pull_out_support;                         /*feature used to edge coordinates pull out*/
 	bool aiunit_game_info_support;                      /*feature used to aiunit game info*/
+	bool fpga_support;
 	bool disable_touch_event_support;                      /*feature to support underwater photo*/
+	bool input_timestamp_in_top_irq_support;                  /* set input time when top half of interrupt*/
+	bool screenshot_not_reset_support;               /*screenshot disable tp reset*/
+	bool fp_grip_support;                               /* edge grip for fingerprint */
+	bool long_strip_abnormal_detect_support;
+	bool fp_grip_hold;
+	bool idle_freq_support;
+	int  fp_grip_enable;
 	u8 aiunit_game_get_num;
 	u8 aiunit_game_set_num;
 	int aiunit_game_enable;
 	u32 aiunit_game_valid_bits;
-	bool rainstorm_mode_v2_support;                     /*rainstorm_mode support feature*/
-	int rainstorm_enable;                               /*control state of rainstorm mode*/
 	/******For FW update area********/
-	bool lpwg_fw_support;                               /*feature to support low power wakeup gesture firmware and effect firmware are separated.*/
 	bool loading_fw;                                    /*touchpanel FW updating*/
 	int firmware_update_type;                           /*firmware_update_type: 0=check firmware version 1=force update; 2=for FAE debug*/
 	struct completion fw_complete;						/*completion for control fw update*/
@@ -1044,6 +1155,7 @@ struct touchpanel_data {
 	struct work_struct lcd_trigger_load_tp_fw_work;
 	/*trigger laod tp fw by lcd driver after lcd reset*/
 	struct workqueue_struct *lcd_trigger_load_tp_fw_wq;
+	bool lpwg_fw_support;				    /*feature to support td4377 lpwg_fw_support*/
 
 	/******For auto test area********/
 	bool in_test_process;                     /*flag whether in test process*/
@@ -1052,7 +1164,7 @@ struct touchpanel_data {
 	struct engineer_test_operations   *engineer_ops;     /*call_back function*/
 	bool auto_test_need_cal_support;
 	bool sportify_aod_gesture_support;
-	bool aod_gesture_support;
+	bool incell_aod_gesture_support;
 	/******For button key area********/
 	/*every bit declear one state of key "reserve(keycode)|home(keycode)|menu(keycode)|back(keycode)"*/
 	u8   vk_bitmap;
@@ -1067,13 +1179,14 @@ struct touchpanel_data {
 	wait_queue_head_t wait;
 	bool up_status;
 	int touch_report_num;
+	int touch_frame_num;
+	u32 max_report_rate_limit;
 	struct point_info last_point;
 	int last_width_major;
 	int last_touch_major;
 	u8 major_rate_limit_times;
 	int point_num;
 	char irq_name[TP_NAME_SIZE_MAX];
-	int irq_state;                      /*irq state*/
 
 	/******For gesture area********/
 	bool disable_gesture_ctrl;                          /*when lcd_trigger_load_tp_fw start no need to control gesture*/
@@ -1081,15 +1194,21 @@ struct touchpanel_data {
 	int gesture_enable;                                 /*control state of black gesture*/
 	struct gesture_info    gesture;                     /*gesture related info*/
 	int gesture_enable_indep;                         /*independent control state of black gesture*/
+	bool incell_aod_flag;
 
-	bool in_aod_flag;
-	bool out_aod_flag;
 	/******For fingerprint area********/
 	int fp_enable;                                      /*underscreen fingerprint enable or not*/
 	int fp_quick_start_data;                            /*for fingerprint quick start featrue*/
 	int fp_disable_after_resume;
 	struct fp_underscreen_info fp_info;	/*tp info used for underscreen fingerprint*/
 	struct thermal_zone_device *oplus_shell_themal;
+	/* fp variables */
+	int fp_down_time;
+	int fp_up_time;
+	int fp_down_cnt;
+	int fp_up_cnt;
+	bool fp_unlock_status_support;
+	u8  fp_unlock_status;
 
 	/******For pm suspend and resume area********/
 	bool bus_ready;                                     /*spi or i2c resume status*/
@@ -1099,7 +1218,6 @@ struct touchpanel_data {
 	tp_resume_order tp_resume_order;
 	tp_suspend_order tp_suspend_order;
 	bool skip_reset_in_resume;                          /*some incell ic is reset by lcd reset*/
-	bool tcm_skip_time;                                   /*suspend/resume TD4160 skip delay time*/
 
 	/*LCD and TP is in one chip,lcd power off in suspend at first, can not operate i2c when tp suspend*/
 	bool skip_suspend_operate;
@@ -1132,6 +1250,7 @@ struct touchpanel_data {
 	/******For Game Hot Zone*******/
 	struct tp_aiunit_game_info tp_ic_aiunit_game_info[MAX_AIUNIT_SET_NUM];    /*tp ic aiunit game info*/
 	struct tp_aiunit_game_info tp_get_aiunit_game_info[MAX_AIUNIT_GET_NUM];   /*tp get aiunit game info*/
+
 	/******For prevention area********/
 	struct mutex		report_mutex;                /*mutex for lock input report flow*/
 	struct kernel_grip_info *grip_info;	/*grip setting and resources*/
@@ -1156,12 +1275,14 @@ struct touchpanel_data {
     u64 curr_time;/*Record the interruption time to kernel*/
     u64 irq_interval;/*Record the interruption time to calculate the reporting rate*/
     u64 irq_handle_time;/*Record the interruption handle time*/
+	u64 touch_down_time;/*Record the touch down time*/
 	/******For other feature area********/
 	struct wakeup_source *ws;                           /*Qualcomm KBA-211220012446, To make power manager stay awake*/
 	struct wakeup_source *tp_wakelock;  				/* speed_resume add  awakelock*/
 	bool is_incell_panel;                               /*touchpanel is incell*/
 	bool disable_suspend_irq_handler;                   /*touchpanel is support disable suspend irq handler */
 	bool is_noflash_ic;                                 /*noflash ic*/
+	bool report_rate_testing;                            /*is report rate testing*/
 	tp_bus_type bus_type;                                 /* tp bus type*/
 	int palm_enable;                                    /*palm enable or not*/
 	int fd_enable;                                        /*face dectet enable or not*/
@@ -1176,9 +1297,14 @@ struct touchpanel_data {
 	int high_frame_value;
 	int limit_enable;                                   /*control state of limit enable */
 	int edge_limit_switch_write_value;                  /*control limit_switch enable */
+	int report_rate_write_value;                        /*report rate, 90: 90HZ, 120:120HZ, 240:240HZ*/
 	int tp_ic_touch_num;                                 /*tp ic get touch num */
 	int last_tp_ic_touch_num;                            /*last tp ic get touch num */
 	int pen_mode_tp_state;
+	u32 get_frame_num;
+	u16 report_rate_test_time;
+	u32 touch_major_sum;
+
 
 	int palm_to_sleep_enable;                            /*detect palm need to sleep when device in Screen lock*/
 
@@ -1188,8 +1314,11 @@ struct touchpanel_data {
 	bool report_rate_white_list_support;
 
 	bool hall_status;                                   /*control state of hall status*/
+	bool is_hall_near_resume;                           /*state of hall status when tp resume*/
 	bool pen_support;                                   /*support pen control*/
 	bool pen_support_opp;                               /*support pen private protocol*/
+	bool no_need_osctest;
+	bool tp_scene_para_switch_support;
 	bool bus_ready_check_support;                       /*not transfer if bus_ready false*/
 	bool tp_lcd_suspend_in_lp_support;                  /*tp suspend before lcd set lp(aod) mode*/
 	bool is_pen_attracted;                              /*state of pen attract*/
@@ -1198,6 +1327,8 @@ struct touchpanel_data {
 	struct message_list *pen_msg_list;
 	int pen_init_success;
 
+	bool fpga_spi_agg_support;
+
 	int rate_ctrl_level;
 	bool temperature_detect_support;
 	bool temperature_detect_shellback_support;
@@ -1205,6 +1336,8 @@ struct touchpanel_data {
 	struct iio_channel *skin_therm_chan;
 	struct hrtimer		temp_timer;
 	struct work_struct get_temperature_work;
+	struct touch_scene_info scene_info;
+	struct long_strip_abnormal_detect_info long_strip_abnormal_detect;
 
 	/******For fb notify area********/
 	struct work_struct     speed_up_work;               /*using for speedup resume*/
@@ -1270,14 +1403,18 @@ struct touchpanel_data {
 	/******For smooth sensitive area********/
 	bool smooth_level_array_support;
 	bool sensitive_level_array_support;
+	bool click_sensitive_level_array_support;
 	u32 smooth_level_array[SMOOTH_LEVEL_NUM];
 	u32 smooth_level_charging_array[SMOOTH_LEVEL_NUM];
 	u32 sensitive_level_array[SENSITIVE_LEVEL_NUM];
 	u32 sensitive_level_charging_array[SENSITIVE_LEVEL_NUM];
+	u32 click_sensitive_level_array[CLICK_SENSITIVE_LEVEL_NUM];
 	u32 *smooth_level_used_array;
 	u32 *sensitive_level_used_array;
+	u32 *click_sensitive_level_used_array;
 	u32 smooth_level_chosen;
 	u32 sensitive_level_chosen;
+	u32 click_sensitive_level_chosen;
 	u32 smooth_level_default;
 	u32 sensitive_level_default;
 
@@ -1303,6 +1440,7 @@ struct touchpanel_data {
 	char *ioc_init_buf;
 	u8 en_touch_event_helper;
 	const char *touch_environment;
+	int communicate_test_cnt;
 #ifdef CONFIG_TOUCHPANEL_TRUSTED_TOUCH
 	struct trusted_touch_vm_info *vm_info;
 	struct mutex clk_io_ctrl_mutex;
@@ -1323,6 +1461,8 @@ struct touchpanel_data {
 	bool irq_disabled;
 	uint32_t irq_tui_flags;
 #endif
+	struct task_struct *suspend_task;
+	int supspend_task_error_cnt;
 };
 
 #ifdef CONFIG_OPLUS_TP_APK
@@ -1395,7 +1535,7 @@ struct oplus_touchpanel_operations {
 	void (*set_fp_error_report)(void *chip_data, bool enable); /*set fp error report*/
 	void (*inject_wdt_reset)(void *chip_data, int value); /*inject watchdog reset*/
 	void (*get_water_mode)(void *chip_data); /*force enter water mode*/
-	void (*get_glove_mode)(void *chip_data, int *enable); /*get glove mode parameters*/
+	void (*get_glove_mode)(void *chip_data, int *enable, int *count); /*force enter glove mode*/
 	void (*set_noise_modetest)(void *chip_data, bool enable);
 	uint8_t (*get_noise_modetest)(void *chip_data);
 	/*If the tp ic need do something, use this!*/
@@ -1406,8 +1546,13 @@ struct oplus_touchpanel_operations {
 	bool (*tp_irq_throw_away)(void *chip_data);
 	void (*rate_white_list_ctrl)(void *chip_data, int value);
 	void (*edge_limit_switch_write)(void *chip_data, int value);
+	void (*report_rate)(void *chip_data, int value);
 	int (*smooth_lv_set)(void *chip_data, int level);
 	int (*sensitive_lv_set)(void *chip_data, int level);
+	int (*pen_sensitive_lv_set)(void *chip_data, int level);
+	int (*click_sensitive_lv_set)(void *chip_data, int level);
+	int (*touch_leave_jitter_set)(void *chip_data, int level);
+	int (*set_package_type)(void *chip_data, int level);
 	int (*diaphragm_touch_lv_set)(void *chip_data, int level);
 	int (*send_temperature)       (void *chip_data, int value, bool status);
 	int (*tp_refresh_switch)(void *chip_data, int fps);
@@ -1432,11 +1577,14 @@ struct oplus_touchpanel_operations {
 				     struct resolution_info *resolution_info); /*return point bit-map auto*/
 	int (*set_high_frame_rate)(void *chip_data, int value, int time);
 	void (*notify_pencil_type)(void *chip_data, uint8_t value);
+	int (*notify_keyboard_open)(void *chip_data);
+	int (*fp_unlock_status_write)(void *chip_data, uint8_t value); /*fp unlock status*/
 	void (*get_pen_points)       (void *chip_data, struct pen_info *pen_info);
 	int (*pen_uplink_msg)(void *chip_data, u32 buf_len, u8 *buf, u32 *out_len);
 	int (*pen_downlink_msg)(void *chip_data, u32 cmd, u32 buf_len, u8 *buf);
+	int (*communicate_test)(void *chip_data);
 	void (*aiunit_game_info)(void *chip_data);
-	int (*tp_irq_control)(void *chip_data, bool enable, int mode);
+	int (*set_idle_freq_mode)(bool enable);
 };
 
 struct aging_test_proc_operations {
@@ -1446,10 +1594,12 @@ struct aging_test_proc_operations {
 
 struct debug_info_proc_operations {
 	void (*delta_read)(struct seq_file *s, void *chip_data);
+	void (*pen_delta_read)(struct seq_file *s, void *chip_data);
 	void (*key_trigger_delta_read)(void *chip_data);
 	void (*self_delta_read)(struct seq_file *s, void *chip_data);
 	void (*self_raw_read)(struct seq_file *s, void *chip_data);
 	void (*baseline_read)(struct seq_file *s, void *chip_data);
+	void (*pen_baseline_read)(struct seq_file *s, void *chip_data);
 	void (*baseline_blackscreen_read)(struct seq_file *s, void *chip_data);
 	void (*main_register_read)(struct seq_file *s, void *chip_data);
 	void (*reserve_read)(struct seq_file *s, void *chip_data);
@@ -1486,6 +1636,8 @@ extern int tp_util_get_vendor(struct hw_resource *hw_res,
 			      struct panel_info *panel_data);
 extern bool tp_judge_ic_match(char *tp_ic_name);
 extern int tp_judge_ic_match_commandline(struct panel_info *panel_data);
+
+void touch_call_fp_grip(struct touchpanel_data *ts, int state);
 
 extern int request_firmware_select(const struct firmware **firmware_p, const char *name, struct device *device);
 bool is_oem_unlocked(void);

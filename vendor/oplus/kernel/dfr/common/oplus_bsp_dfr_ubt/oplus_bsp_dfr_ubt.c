@@ -3,6 +3,7 @@
 * Copyright (C) 2023-2030 Oplus. All rights reserved.
 */
 #include <linux/kernel.h>
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/mm.h>
@@ -81,8 +82,13 @@ static int __access_remote_vm_no_lock(struct mm_struct *mm, unsigned long addr,
 		void *maddr;
 		struct page *page = NULL;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 		ret = get_user_pages_remote(mm, addr, 1,
 				gup_flags, &page, &vma, NULL);
+#else
+		ret = get_user_pages_remote(mm, addr, 1,
+                                 gup_flags, &page, NULL);
+#endif
 		if (ret <= 0) {
 #ifndef CONFIG_HAVE_IOREMAP_PROT
 			break;

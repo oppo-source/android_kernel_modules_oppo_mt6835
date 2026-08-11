@@ -6,6 +6,7 @@
 #include <linux/gpio.h>
 #include <linux/kthread.h>
 #include <linux/interrupt.h>
+#include <linux/version.h>
 #include "synaptics_tcm_S3910.h"
 
 #ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
@@ -40,7 +41,6 @@ static int syna_long_large_zone_handle_func(void *chip_data,
 static int syna_short_large_zone_handle_func(void *chip_data,
 		struct grip_zone_area *grip_zone,
 		bool enable);
-
 static int syna_set_fw_grip_area(void *chip_data,
 				 struct grip_zone_area *grip_zone,
 				 bool enable);
@@ -51,6 +51,7 @@ static int syna_set_large_thd(void *chip_data, int large_thd);
 static int syna_set_large_corner_frame_limit(void *chip_data, int frame);
 static int syna_set_disable_level(void *chip_data, uint8_t level);
 static int syna_glove_mode(void *chip_data, bool enable);
+static int syna_leather_cover_mode(void *chip_data, bool enable);
 static void syna_set_touch_direction(void *chip_data, uint8_t dir);
 
 static int syna_tcm_set_waterproof(void *chip_data, int value);
@@ -88,6 +89,7 @@ static struct syna_support_grip_zone syna_grip[] = {
 };
 
 #ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
 const struct mtk_chip_config st_spi_ctrdata = {
 	.sample_sel = 0,
 	.cs_setuptime = 5000,
@@ -96,6 +98,10 @@ const struct mtk_chip_config st_spi_ctrdata = {
 	.tick_delay = 0,
 };
 #endif
+#endif
+#define SYNA_CMD_GAME_AIUINIT_EN                     0xD5
+#define SYNA_CMD_GAME_AIUINIT                        0x03
+#define AIUNIT_LONG_NUM         MAX_AIUNIT_SET_NUM*10
 
 static struct syna_tcm_data *g_tcm_info[TP_SUPPORT_MAX] = {NULL};
 
@@ -505,6 +511,7 @@ static int syna_parse_report(struct syna_tcm_data *tcm_info)
 				return -1;
 			}
 			object_data[obj].status = data;
+			touch_data->glove_status = data;
 			offset += bits;
 			break;
 
@@ -1295,7 +1302,16 @@ static void syna_tcm_dispatch_report(struct syna_tcm_data *tcm_info)
 				syna_set_trigger_reason(tcm_info, IRQ_PALM);
 				tcm_info->palm_to_sleep_state = PALM_TO_DEFAULT;
 			}
-
+			if (touch_data->glove_status == GLOVE_FLAG && touch_data->glove_flag == 1) {
+				TPD_INFO("syna_tcm_dispatch_report:glove_mode = 1\n");
+				tp_healthinfo_report(tcm_info->monitor_data, HEALTH_GLOVE, &touch_data->glove_flag);
+				touch_data->glove_flag = 0;
+			}
+			if (touch_data->glove_status == FINGER_FLAG && touch_data->glove_flag == 0) {
+				TPD_INFO("syna_tcm_dispatch_report:glove_mode = 0\n");
+				tp_healthinfo_report(tcm_info->monitor_data, HEALTH_GLOVE, &touch_data->glove_flag);
+				touch_data->glove_flag = 1;
+			}
 			if (touch_data->lpwg_gesture == TOUCH_HOLD_UP
 			    || touch_data->lpwg_gesture == TOUCH_HOLD_DOWN) {
 				syna_set_trigger_reason(tcm_info, IRQ_FINGERPRINT);
@@ -1428,6 +1444,14 @@ static void syna_tcm_dispatch_message(struct syna_tcm_data *tcm_info)
 		syna_tcm_resize_chunk_size(tcm_info);
 		TP_INFO(tcm_info->tp_index, "Received identify report (firmware mode = 0x%02x)\n",
 			 tcm_info->id_info.mode);
+
+
+		if ((tcm_info->id_info.mode == MODE_APPLICATION) && (*tcm_info->in_suspend) && ((tcm_info->gesture_state) || (tcm_info->finger_state))) {
+			TP_INFO(tcm_info->tp_index, "%s:set reset boot mode gesture tcm_info->gesture_state :%d , *tcm_info->in_suspend :%d, tcm_info->finger_state:%d\n",
+		        	__func__, tcm_info->gesture_state, *tcm_info->in_suspend, tcm_info->finger_state);
+			 queue_work(tcm_info->helper_workqueue, &tcm_info->helper_work);
+		}
+
 		if (0x0b == tcm_info->id_info.mode) {
 			tcm_info->firmware_mode_count++;
 			if (!tcm_info->upload_flag && tcm_info->firmware_mode_count >= FIRMWARE_MODE_BL_MAX) {
@@ -2587,6 +2611,45 @@ exit:
 	return retval;
 }
 
+static int syna_tcm_set_long_config(struct syna_tcm_data *tcm_info, unsigned char*buf)
+{
+	int retval = 0;
+	char *report = NULL;
+	unsigned char out_buf[AIUNIT_LONG_NUM+1] = {0};
+	unsigned char *resp_buf = NULL;
+	unsigned int resp_buf_size = 0, resp_length = 0;
+	unsigned int i = 0;
+
+	TPD_DEBUG("%s:config 0x%x\n", __func__, buf[0]);
+
+	for (i = 0; i < (AIUNIT_LONG_NUM+1); i++) {
+	   out_buf[i] = buf[i];
+	}
+
+	retval = syna_tcm_write_message(tcm_info,
+					CMD_SET_LONG_CONFIG,
+					out_buf,
+					sizeof(out_buf),
+					&resp_buf,
+					&resp_buf_size,
+					&resp_length,
+					RESPONSE_TIMEOUT_MS_SHORT);
+
+	if (retval < 0) {
+		TP_INFO(tcm_info->tp_index, "Failed to write command %s\n", STR(CMD_SET_LONG_CONFIG));
+		report = tp_kzalloc(30, GFP_KERNEL);
+		if (report) {
+			tp_healthinfo_report(tcm_info->monitor_data, HEALTH_REPORT, report);
+			tp_kfree((void **)&report);
+		}
+		goto exit;
+	}
+
+exit:
+	tp_kfree((void **)&resp_buf);
+
+	return retval;
+}
 static int syna_tcm_sleep(struct syna_tcm_data *tcm_info, bool en)
 {
 	int retval = 0;
@@ -3308,7 +3371,7 @@ static int syna_tcm_set_game_mode(struct syna_tcm_data *tcm_info, int enable)
 				report_rate = tcm_info->game_report_rate_array[3];
 				break;
 			case SYNA_GET_RATE_180:
-				report_rate = SYNA_180HZ_REPORT_RATE;
+				report_rate = tcm_info->game_report_rate_array[4];
 				break;
 			default:
 				report_rate = tcm_info->game_rate;
@@ -3698,6 +3761,14 @@ static int syna_mode_switch(void *chip_data, work_mode mode, int flag)
 		}
 		break;
 
+	case MODE_LEATHER_COVER:
+		ret = syna_leather_cover_mode(tcm_info, flag);
+
+		if (ret < 0) {
+			TP_INFO(tcm_info->tp_index, "%s: synaptics enable leather mode failed.\n", __func__);
+		}
+		break;
+
 	case MODE_SLEEP:
 		ret = syna_tcm_sleep(tcm_info, flag);
 
@@ -3832,6 +3903,9 @@ static fw_check_state syna_fw_check(void *chip_data,
 	TP_INFO(tcm_info->tp_index, "fw id %d, custom config id 0x%s\n", panel_data->tp_fw,
 		 tcm_info->app_info.customer_config_id);
 
+        tcm_info->app_info.customer_config_id[9] = '\0';
+	TP_INFO(tcm_info->tp_index, "custom config id 0x%s\n", tcm_info->app_info.customer_config_id);
+
 	if (strlen(tcm_info->app_info.customer_config_id) == 0) {
 		tp_healthinfo_report(tcm_info->monitor_data, HEALTH_REPORT, "fw_check_err_cfgid");
 		return FW_ABNORMAL;
@@ -3858,7 +3932,7 @@ static fw_check_state syna_fw_check(void *chip_data,
 			}
 			snprintf(dev_version, MAX_DEVICE_VERSION_LENGTH  - ver_len,
 				 "%s", (char *)tcm_info->app_info.customer_config_id);
-			strlcpy(&panel_data->manufacture_info.version[ver_len],
+			strncpy(&panel_data->manufacture_info.version[ver_len],
 				dev_version, MAX_DEVICE_VERSION_LENGTH - ver_len);
 		}
 	}
@@ -3893,14 +3967,19 @@ static void syna_tcm_helper_work(struct work_struct *work)
 	struct syna_tcm_data *tcm_info = container_of(work, struct syna_tcm_data,
 					 helper_work);
 
-	mutex_lock(&tcm_info->reset_mutex);
-	retval = syna_tcm_run_application_firmware(tcm_info);
+	if (tcm_info->id_info.mode != MODE_APPLICATION) {
+		mutex_lock(&tcm_info->reset_mutex);
+		retval = syna_tcm_run_application_firmware(tcm_info);
 
-	if (retval < 0) {
-		TP_INFO(tcm_info->tp_index, "Failed to switch to app mode\n");
+		if (retval < 0) {
+			TP_INFO(tcm_info->tp_index, "Failed to switch to app mode\n");
+		}
+
+		mutex_unlock(&tcm_info->reset_mutex);
+	} else {
+		syna_mode_switch(tcm_info, MODE_GESTURE, true);
+		TP_INFO(tcm_info->tp_index, "%s:boot mode is 0x01 reset gesture mode\n", __func__);
 	}
-
-	mutex_unlock(&tcm_info->reset_mutex);
 }
 
 static int syna_tcm_async_work(void *chip_data)
@@ -4010,6 +4089,7 @@ static void syna_tcm_enable_fingerprint(void *chip_data, uint32_t enable)
 			return;
 		}*/
 	}
+	tcm_info->finger_state = config;
 
 	while (retry > 0) {
 		retval = syna_tcm_set_dynamic_config(tcm_info, DC_TOUCH_HOLD, config);
@@ -7055,9 +7135,43 @@ static int syna_glove_mode(void *chip_data, bool enable)
 
 	TP_INFO(tcm_info->tp_index, "%s: %s glove mode.\n", __func__, enable ? "Enter" : "Exit");
 
-	retval = syna_tcm_get_dynamic_config(tcm_info, DC_LOW_TEMP_ENABLE, &regval);
+	retval = syna_tcm_get_dynamic_config(tcm_info, DC_GLOVE_MODE_ENABLED, &regval);
 	if (retval < 0) {
 		TP_INFO(tcm_info->tp_index, "Failed to get glove mode config\n");
+		return retval;
+	}
+
+	if (enable)  {
+		regval = regval | 0x01;
+	} else {
+		regval = regval & 0xfe;
+	}
+	retval = syna_tcm_set_dynamic_config(tcm_info, DC_GLOVE_MODE_ENABLED, regval);
+	if (retval < 0) {
+		TP_INFO(tcm_info->tp_index, "Failed to set glove mode config\n");
+		return retval;
+	}
+
+	retval = syna_tcm_get_dynamic_config(tcm_info, DC_GLOVE_MODE_ENABLED, &regval);
+	if (retval < 0) {
+		TP_INFO(tcm_info->tp_index, "Failed to get glove mode config\n");
+		return retval;
+	}
+	TP_INFO(tcm_info->tp_index, "%s: now reg_val=0x%x", __func__, regval);
+	return 0;
+}
+
+static int syna_leather_cover_mode(void *chip_data, bool enable)
+{
+	int retval = 0;
+	unsigned short regval = 0;
+	struct syna_tcm_data *tcm_info = (struct syna_tcm_data *)chip_data;
+
+	TP_INFO(tcm_info->tp_index, "%s: %s leather_cover mode.\n", __func__, enable ? "Enter" : "Exit");
+
+	retval = syna_tcm_get_dynamic_config(tcm_info, DC_LOW_TEMP_ENABLE, &regval);
+	if (retval < 0) {
+		TP_INFO(tcm_info->tp_index, "Failed to get leather_cover mode config\n");
 		return retval;
 	}
 
@@ -8050,7 +8164,67 @@ static int syna_tcm_send_temperature(void *chip_data, int temp, bool status)
 
 	return retval;
 }
+static void syna_aiunit_game_info(void *chip_data)
 
+{
+	struct syna_tcm_data *tcm_info = (struct syna_tcm_data *)chip_data;
+	u8 cmd[MAX_AIUNIT_SET_NUM * 10 + 1] = { 0 };
+	int i = 0;
+	int ret = 0;
+	unsigned short regval = 0;
+
+	if (tcm_info == NULL) {
+		return;
+	}
+
+	if (tcm_info->ts->is_suspended) {
+		return;
+	}
+	if (tcm_info->ts->aiunit_game_enable) {
+		ret = syna_tcm_get_dynamic_config(tcm_info, SYNA_CMD_GAME_AIUINIT_EN, &regval);
+		msleep(3);
+		ret = syna_tcm_set_dynamic_config(tcm_info, SYNA_CMD_GAME_AIUINIT_EN, regval|0x01);
+		msleep(3);
+		ret = syna_tcm_get_dynamic_config(tcm_info, SYNA_CMD_GAME_AIUINIT_EN, &regval);
+		if (regval == 1) {
+			TPD_INFO("%s: aiunit game info enter suc.\n", __func__);
+		} else {
+			TPD_INFO("%s: aiunit game info enter fail.\n", __func__);
+		}
+	} else {
+		ret = syna_tcm_get_dynamic_config(tcm_info, SYNA_CMD_GAME_AIUINIT_EN, &regval);
+		if (regval == 0) {
+			TPD_INFO("%s: aiunit game info exit suc.\n", __func__);
+		} else {
+			TPD_INFO("%s: aiunit game info exit fail.\n", __func__);
+		}
+	}
+
+	cmd[0] = SYNA_CMD_GAME_AIUINIT;
+	for (i = 0; i < MAX_AIUNIT_SET_NUM; i++) {
+		cmd[10 * i + 1] = tcm_info->ts->tp_ic_aiunit_game_info[i].gametype;
+		cmd[10 * i + 2] = tcm_info->ts->tp_ic_aiunit_game_info[i].aiunit_game_type;
+		cmd[10 * i + 3] = tcm_info->ts->tp_ic_aiunit_game_info[i].left & 0xff;
+		cmd[10 * i + 4] = (tcm_info->ts->tp_ic_aiunit_game_info[i].left >> 8) & 0xff;
+		cmd[10 * i + 5] = tcm_info->ts->tp_ic_aiunit_game_info[i].top & 0xff;
+		cmd[10 * i + 6] = (tcm_info->ts->tp_ic_aiunit_game_info[i].top >> 8) & 0xff;
+		cmd[10 * i + 7] = tcm_info->ts->tp_ic_aiunit_game_info[i].right & 0xff;
+		cmd[10 * i + 8] = (tcm_info->ts->tp_ic_aiunit_game_info[i].right >> 8) & 0xff;
+		cmd[10 * i + 9] = tcm_info->ts->tp_ic_aiunit_game_info[i].bottom & 0xff;
+		cmd[10 * i + 10] = (tcm_info->ts->tp_ic_aiunit_game_info[i].bottom >> 8) & 0xff;
+		TPD_INFO("type:%x,%x left:%x,%x top:%x,%x right:%x,%x bottom:%x,%x.", \
+				cmd[10 * i + 1], cmd[10 * i + 2], \
+				cmd[10 * i + 3], cmd[10 * i + 4], \
+				cmd[10 * i + 5], cmd[10 * i + 6], \
+				cmd[10 * i + 7], cmd[10 * i + 8], \
+				cmd[10 * i + 9], cmd[10 * i + 10]);
+	}
+
+	ret = syna_tcm_set_long_config(tcm_info, cmd);
+	if (ret < 0) {
+		TPD_INFO("syna tp aiunit game write fail");
+	}
+}
 static void syna_set_gesture_state(void *chip_data, int state)
 {
 	struct syna_tcm_data *tcm_info = (struct syna_tcm_data *)chip_data;
@@ -8116,6 +8290,7 @@ static struct oplus_touchpanel_operations syna_tcm_ops = {
 	.get_touch_points_help		= syna_get_touch_points_help,
 	.set_high_frame_rate            = syna_tcm_set_high_frame_rate,
 	.send_temperature		= syna_tcm_send_temperature,
+	.aiunit_game_info               = syna_aiunit_game_info,
 };
 
 static void syna_async_work_lock(struct work_struct *work)
@@ -8273,7 +8448,28 @@ static int syna_tcm_probe(struct spi_device *spi)
 	u64 time_counter = 0;
 
 	TPD_INFO("%s: enter\n", __func__);
+#ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	int rc;
+	char *mtk_platform_name;
+        struct device *dev;
+        struct device_node *np;
+        dev = &spi->dev;
+        np = dev->of_node;
 
+	rc = of_property_read_string(np, "is_mtk_platform", (char const **)&mtk_platform_name);
+	if (rc) {
+		TPD_INFO("is_mtk_platform not specified\n");
+	}
+	else {
+		TPD_INFO("S3910 configurations for mtk_platform_name : %s\n", mtk_platform_name);
+		if ((strcmp(mtk_platform_name , "mt6991")) == 0) {
+			TPD_INFO("platform name is mt6991, need to cancel probe.\n");
+			return -1;
+		}
+	}
+#endif
+#endif
 	reset_healthinfo_time_counter(&time_counter);
 
 	/*1. alloc mem for tcm_data*/
@@ -8298,7 +8494,6 @@ static int syna_tcm_probe(struct spi_device *spi)
 	/* init spi_device from mtk */
 	spi->mode = SPI_MODE_0;
 	spi->bits_per_word = 8;
-	spi->max_speed_hz = 15 * 1000 * 1000;
 	spi->cs_setup.value = 1;
 	spi->cs_setup.unit = 0;
 	spi->cs_hold.value = 1;
@@ -8318,7 +8513,11 @@ static int syna_tcm_probe(struct spi_device *spi)
 	ts->s_client  = spi;
 	ts->irq = spi->irq;
 	ts->chip_data = tcm_info;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+	ts->s_client->chip_select[0] = 0; /*modify reg=0 for more tp vendor share same spi interface*/
+#else
 	ts->s_client->chip_select = 0; /*modify reg=0 for more tp vendor share same spi interface*/
+#endif
 	spi_set_drvdata(spi, ts);
 
 	ts->ts_ops = &syna_tcm_ops;
@@ -8476,7 +8675,6 @@ static int syna_tcm_probe(struct spi_device *spi)
 	init_chip_dts(ts->dev, tcm_info);
 	tcm_info->black_gesture_indep = ts->black_gesture_indep_support;
 	tcm_info->differ_read_every_frame = false;
-
 	/* 10. kernel grip interface init*/
 	if (ts->grip_info) {
 		if (ts->grip_info->grip_handle_in_fw) {
@@ -8635,7 +8833,7 @@ static const struct dev_pm_ops syna_pm_ops = {
 
 static const struct spi_device_id syna_tmc_id[] = {
         { TPD_DEVICE, 0},
-#ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#ifdef CONFIG_TOUCHPANEL_MULTI_NOFLASH
         { "oplus,tp_noflash", 0 },
 #endif
         { }
@@ -8643,7 +8841,7 @@ static const struct spi_device_id syna_tmc_id[] = {
 
 static struct of_device_id syna_match_table[] = {
         { .compatible = TPD_DEVICE, },
-#ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#ifdef CONFIG_TOUCHPANEL_MULTI_NOFLASH
         { .compatible = "oplus,tp_noflash", },
 #endif
         { .compatible = "synaptics-s3910", },

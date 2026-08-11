@@ -23,8 +23,14 @@ typedef enum {
 	EXCEP_FW_UPDATE,
 	EXCEP_GRIP,
 	EXCEP_IRQ,
-	EXCEP_BASELINE_ERR,
+	EXCEP_BUS_READY,
+	EXCEP_TOUCH_IC_RESET = 103,
+	EXCEP_FW_FD,
 } tp_excep_type;
+
+#define FP_EVENT_COST_TIME_OVER_10MS 10000
+#define FP_EVENT_COST_TIME_OVER_18MS 18000
+#define FP_EVENT_COST_TIME_OVER_26MS 26000
 
 int tp_exception_report(void *tp_exception_data, tp_excep_type excep_tpye, void *summary, unsigned int summary_size);
 

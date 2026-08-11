@@ -18,7 +18,7 @@
 #include "hbp_tui.h"
 #include "hbp_core.h"
 
-#if IS_ENABLED(CONFIG_GH_ARM64_DRV)
+#if IS_ENABLED(CONFIG_TOUCHPANEL_TRUSTED_TOUCH)
 #include <linux/pinctrl/qcom-pinctrl.h>
 
 int hbp_init_vm_mem(struct device_node *np, struct hbp_core *hbp)

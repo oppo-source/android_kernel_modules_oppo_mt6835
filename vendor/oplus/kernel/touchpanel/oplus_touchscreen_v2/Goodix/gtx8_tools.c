@@ -50,21 +50,27 @@
 static struct gtx8_tool_info *g_gtx8_tool_info[TP_SUPPORT_MAX] = {NULL};
 
 static int brl_spi_read(struct spi_device *spi, unsigned int addr,
-		    unsigned char *data, unsigned int len)
+		    unsigned char *data, unsigned int len, bool flag)
 {
 	u8 *rx_buf = NULL;
 	u8 *tx_buf = NULL;
 	struct spi_transfer xfers;
 	struct spi_message spi_msg;
 	int ret = 0;
+	int read_length = 0;
 
-	rx_buf = kzalloc(SPI_READ_PREFIX_LEN + len, GFP_KERNEL);
+	if (flag)
+		read_length = SPI_READ_PREFIX_LEN + 1;
+	else
+		read_length = SPI_READ_PREFIX_LEN;
+
+	rx_buf = kzalloc(read_length + len, GFP_KERNEL);
 	if (!rx_buf) {
 		TPD_INFO("rx_buf kzalloc error\n");
 		ret = -ENOMEM;
 		return ret;
 	}
-	tx_buf = kzalloc(SPI_READ_PREFIX_LEN + len, GFP_KERNEL);
+	tx_buf = kzalloc(read_length + len, GFP_KERNEL);
 	if (!tx_buf) {
 		TPD_INFO("tx_buf kzalloc error\n");
 		ret = -ENOMEM;
@@ -83,10 +89,12 @@ static int brl_spi_read(struct spi_device *spi, unsigned int addr,
 	tx_buf[5] = 0xFF;
 	tx_buf[6] = 0xFF;
 	tx_buf[7] = 0xFF;
+	if (flag)
+		tx_buf[8] = 0xFF;
 
 	xfers.tx_buf = tx_buf;
 	xfers.rx_buf = rx_buf;
-	xfers.len = SPI_READ_PREFIX_LEN + len;
+	xfers.len = read_length + len;
 	xfers.cs_change = 0;
 	spi_message_add_tail(&xfers, &spi_msg);
 	ret = spi_sync(spi, &spi_msg);
@@ -94,7 +102,7 @@ static int brl_spi_read(struct spi_device *spi, unsigned int addr,
 		TPD_INFO("spi transfer error:%d\n", ret);
 		goto exit;
 	}
-	memcpy(data, &rx_buf[SPI_READ_PREFIX_LEN], len);
+	memcpy(data, &rx_buf[read_length], len);
 
 exit:
 	kfree(tx_buf);
@@ -148,6 +156,7 @@ static int brl_async_read(struct gtx8_tool_info *p_goodix_tool_info, void __user
 	u32 reg_addr, length;
 	u8 i2c_msg_head[I2C_MSG_HEAD_LEN];
 	struct spi_device *spi = p_goodix_tool_info->spi;
+	bool flag = p_goodix_tool_info->is_fpga_support;
 
 	ret = copy_from_user(&i2c_msg_head, arg, I2C_MSG_HEAD_LEN);
 	if (ret)
@@ -166,7 +175,7 @@ static int brl_async_read(struct gtx8_tool_info *p_goodix_tool_info, void __user
 		return -ENOMEM;
 	}
 
-	if (brl_spi_read(spi, reg_addr, databuf, length)) {
+	if (brl_spi_read(spi, reg_addr, databuf, length, flag)) {
 		ret = -EBUSY;
 		goto err_out;
 	}
@@ -494,6 +503,8 @@ static const struct file_operations gtx8_tools_fops = {
 #endif
 };
 
+#define GTP_TOOLS_0 "gtp_tools0"
+#define GTP_TOOLS_1 "gtp_tools1"
 #define BUF_MAX 25
 int gtx8_init_tool_node(struct touchpanel_data *ts,  int *p)
 {
@@ -524,8 +535,19 @@ int gtx8_init_tool_node(struct touchpanel_data *ts,  int *p)
 
 	p_gtx8_tool_info->rmidev_major_num = MAJOR(p_gtx8_tool_info->dev_no);
 	/* 3. Alloc class */
-	p_gtx8_tool_info->class = class_create(THIS_MODULE, buf);
-
+#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
+	if (ts->tp_index == 0) {
+		p_gtx8_tool_info->class = class_create(GTP_TOOLS_0);
+	} else {
+		p_gtx8_tool_info->class = class_create(GTP_TOOLS_1);
+	}
+#else
+	if (ts->tp_index == 0) {
+		p_gtx8_tool_info->class = class_create(THIS_MODULE, GTP_TOOLS_0);
+	} else {
+		p_gtx8_tool_info->class = class_create(THIS_MODULE, GTP_TOOLS_1);
+	}
+#endif
 	if (IS_ERR(p_gtx8_tool_info->class)) {
 		ret = PTR_ERR(p_gtx8_tool_info->class);
 		TP_INFO(ts->tp_index, "couldn't create class rc = %d\n", ret);
@@ -565,6 +587,8 @@ int gtx8_init_tool_node(struct touchpanel_data *ts,  int *p)
 	p_gtx8_tool_info->reset = ts->ts_ops->reset;
 	p_gtx8_tool_info->tp_index = ts->tp_index;
 	p_gtx8_tool_info->p_gt8x_rawdiff_mode = (int *)p;
+	p_gtx8_tool_info->is_fpga_support = ts->fpga_support;
+	TP_INFO(ts->tp_index, "gtx8_tool support fpga : %d\n", p_gtx8_tool_info->is_fpga_support);
 	/* 6. add for more goodix ic */
 	g_gtx8_tool_info[ts->tp_index] = p_gtx8_tool_info;
 

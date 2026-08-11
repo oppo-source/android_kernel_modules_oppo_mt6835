@@ -36,11 +36,7 @@
 #endif
 #include <linux/mm.h>
 #include <linux/version.h>
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
-#include <proc_fs.h>
-#else
 #include <linux/proc_fs.h>
-#endif
 
 #include "fhp_core.h"
 
@@ -284,6 +280,20 @@ static int fhp_spi_sync(void *priv, char *tx, char *rx, int32_t len)
 	return fts->bus_ops->spi_sync(fts->bus_ops, tx, rx, len);
 }
 
+static int fhp_spi_set_para(void *priv, uint8_t mode, uint8_t bits_per_word, int speed)
+{
+	struct fts_core *fts = (struct fts_core *)priv;
+
+	return fts->bus_ops->spi_set_para(fts->bus_ops, mode, bits_per_word, speed);
+}
+
+static int fhp_spi_get_para(void *priv, uint8_t *mode, uint8_t *bits_per_word, int *speed)
+{
+	struct fts_core *fts = (struct fts_core *)priv;
+
+	return fts->bus_ops->spi_get_para(fts->bus_ops, mode, bits_per_word, speed);
+}
+
 static int fhp_chip_get_frame(void *priv, u8 *raw, u32 rawsize)
 {
 	u8 cmd = 0;
@@ -322,6 +332,54 @@ static int fhp_read_fod_info(struct fts_core *ts_data, struct fod_info *fod)
 	fod->fp_area_rate = val[2];
 	fod->fp_x = (val[4] << 8) + val[5];
 	fod->fp_y = (val[6] << 8) + val[7];
+	fod->fp_time = val[9];
+
+	return 0;
+}
+
+static int fhp_read_fod_error_info(struct fts_core *ts_data)
+{
+	int ret = 0;
+	u8 cmd = FT3681_REG_FOD_ERROR_INFO;
+	u8 val[FT3681_REG_FOD_ERROR_INFO_LEN] = { 0 };
+
+	ret = fhp_chip_read(ts_data, &cmd, 1, &val[0], FT3681_REG_FOD_ERROR_INFO_LEN);
+	if (ret < 0) {
+		hbp_err("TP_FP_ERROR_REPORT:failed to read fod data\n");
+		return ret;
+	}
+
+	hbp_info("TP_FP_ERROR_REPORT:fingerprint error type:[%*ph]\n", FT3681_REG_FOD_ERROR_INFO_LEN, val);
+	switch (val[FT3681_REG_FOD_ERROR_INFO_LEN - 1]) {
+	case FTS_FINGERPRINT_AREA_NOT_MATCH:
+		/*tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fingerprint_area_not_match_count");*/
+		hbp_info("TP_FP_ERROR_REPORT:area size: 0x%x\n", val[12]);
+		hbp_info("TP_FP_ERROR_REPORT:FINGERPRINT_AREA_NOT_MATCH\n");
+		break;
+	case FTS_ANOTHER_FINGER_ON_NON_FP_ZONE:
+		/*
+		tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "another_finger_on_non-fingerprint_zone_count");
+		*/
+		hbp_info("TP_FP_ERROR_REPORT:x:0x%x,y:0x%x\n", (val[4] << 8) + val[5], (val[6] << 8) + val[7]);
+		hbp_info("TP_FP_ERROR_REPORT:ANOTHER_FINGER_ON_NON_FP_ZONE\n");
+		break;
+	case FTS_FINGERPRINT_DOWN_BEFORE_FP_ENABLE:
+		/*
+			tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fingerprint_down_before_fp_enable_count");
+		*/
+		hbp_info("TP_FP_ERROR_REPORT:down time: %*ph\n", 4, val);
+		hbp_info("TP_FP_ERROR_REPORT:FINGERPRINT_DOWN_BEFORE_FP_ENABLE\n");
+		break;
+	case FTS_FINGERPRINT_X_Y_NOT_MATCH:
+		hbp_info("TP_FP_ERROR_REPORT:FINGERPRINT_X_Y_NOT_MATCH\n");
+		break;
+	case FTS_FINGERPRINT_OUT_MOVE_IN:
+		hbp_info("TP_FP_ERROR_REPORT:FINGERPRINT_OUT_MOVE_IN\n");
+		break;
+	default:
+		hbp_info("TP_FP_ERROR_REPORT:unknown fingerprint error type: 0x%x\n", val[FT3681_REG_FOD_ERROR_INFO_LEN - 1]);
+		break;
+	}
 
 	return 0;
 }
@@ -380,13 +438,17 @@ static int fhp_chip_get_irq_reason(void *priv, enum irq_reason *reason)
 	case FTS_RST_REASON_PWR:
 		*reason = IRQ_REASON_RESET_PWR;
 		break;
+	case FTS_GESTURE_DIFF:
+		*reason = IRQ_REASON_GESTURE_DIFF;
+		break;
 	default:
 		*reason = IRQ_REASON_NORMAL;
 		break;
 	}
 
-	hbp_info("hbp chip reset, reason 0x%x\n", *reason);
-
+	if (reset_reason != FTS_GESTURE_DIFF) {
+		hbp_info("hbp chip reset, reason 0x%x\n", *reason);
+	}
 	ret = fhp_chip_write_reg(fts, FTS_REG_RESET_REASON, 0x00);
 	if (ret < 0) {
 		hbp_err("failed to clear reset reason");
@@ -527,12 +589,20 @@ static int fhp_chip_get_gesture(void *priv, struct gesture_info *gesture)
 			} else {
 				gesture->type = FingerprintUp;
 			}
-
 			gesture->Point_start.x = fod.fp_x;
 			gesture->Point_start.y = fod.fp_y;
 			gesture->Point_end.x = fod.fp_area_rate;
 			gesture->Point_end.y = 0;
+			gesture->tp_firmware_time = fod.fp_time;
 		}
+		break;
+	case GESTURE_FINGER_PRINT_ERROR:
+		ret = fhp_read_fod_error_info(fts);
+		if (ret < 0) {
+				hbp_err("failed to read fod error info\n");
+				return ret;
+		}
+		gesture->type = UnknownGesture;
 		break;
 	default:
 		gesture->type = UnknownGesture;
@@ -861,6 +931,8 @@ static ssize_t fts_debug_write(struct file *filp, const char __user *buff, size_
 		goto proc_write_err;
 	}
 
+	hbp_info("write buf is %s", writebuf);
+
 	hbp_debug("write opmode %d\n", writebuf[0]);
 
 	proc->opmode = writebuf[0];
@@ -899,8 +971,10 @@ static ssize_t fts_debug_write(struct file *filp, const char __user *buff, size_
 	case PROC_HW_RESET:
 		snprintf(tmp, PROC_BUF_SIZE, "%s", writebuf + 1);
 		tmp[buflen - 1] = '\0';
+		hbp_info("PROC_HW_RESET data is : %s", tmp);
 		if (strncmp(tmp, "focal_driver", 12) == 0) {
 			hbp_info("APK execute HW Reset");
+			fhp_chip_write_reg(ts_data, 0xB6, 0x01);
 			//fhp_reset(fhp_data, 0);
 		}
 		break;
@@ -925,7 +999,7 @@ static ssize_t fts_debug_write(struct file *filp, const char __user *buff, size_
 		break;
 
 	case PROC_CONFIGURE:
-		ts_data->bus_ops->spi_setup(ts_data->bus_ops, writebuf[1], writebuf[2], *(u32 *)(writebuf + 4));
+		ts_data->bus_ops->spi_set_para(ts_data->bus_ops, writebuf[1], writebuf[2], *(u32 *)(writebuf + 4));
 		break;
 	default:
 		break;
@@ -1052,6 +1126,8 @@ static int fhp_chip_debug_init(struct fts_core *ts_data)
 
 struct dev_operations fts_ops = {
 	.spi_sync = fhp_spi_sync,
+	.spi_set_para = fhp_spi_set_para,
+	.spi_get_para = fhp_spi_get_para,
 	.get_frame = fhp_chip_get_frame,
 	.get_gesture = fhp_chip_get_gesture,
 	.get_touch_points = fhp_chip_get_touch_points,
@@ -1094,12 +1170,24 @@ static int fts_dev_probe(struct platform_device *pdev)
 	return 0;
 
 err_exit:
+	kfree(fts->bus_rx_buf);
+	kfree(fts->bus_tx_buf);
+	kfree(fts);
+	g_fts = NULL;
 	return ret;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+static void fts_dev_remove(struct platform_device *spi)
+#else
 static int fts_dev_remove(struct platform_device *spi)
+#endif
 {
+	hbp_info("fts_dev_remove.\n");
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+#else
 	return 0;
+#endif
 }
 
 static const struct of_device_id fts_dt_match[] = {

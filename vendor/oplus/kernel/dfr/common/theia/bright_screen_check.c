@@ -170,6 +170,7 @@ static bool is_need_skip(void)
 
 	if (is_bright_contain_skip_stage())
 		return true;
+
 	if (is_slowkernel_skip())
 		return true;
 

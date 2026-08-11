@@ -144,7 +144,12 @@ int jadard_reset(void *chip_data)
 		return ret;
 	}
 
-	ret = chip_info->module_fp->fp_0f_upgrade_fw(NULL, &(chip_info->tp_fw));
+	if (ERR_ALLOC_MEM(chip_info->tp_fw.data) || chip_info->tp_fw.size <= 0) {
+		TPD_INFO("[JDTP] fw data/size is invaild\n");
+		ret = chip_info->module_fp->fp_0f_upgrade_fw(NULL, chip_info->p_firmware_headfile);
+	} else {
+		ret = chip_info->module_fp->fp_0f_upgrade_fw(NULL, &(chip_info->tp_fw));
+	}
 
     if (ret >= 0) {
         chip_info->module_fp->fp_read_fw_ver();

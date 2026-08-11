@@ -127,7 +127,11 @@ static int reboot_callback_func(struct notifier_block *nb,
         ptr = write_buf + total_len;
     }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
     bdev = blkdev_get_by_path(TARGET_DEV_BLOCK, FMODE_READ | FMODE_WRITE, NULL);
+#else
+    bdev = blkdev_get_by_path(TARGET_DEV_BLOCK, FMODE_READ | FMODE_WRITE, NULL, NULL);
+#endif
 
     if (IS_ERR(bdev)) {
         pr_err("Failed to get dev block\n");

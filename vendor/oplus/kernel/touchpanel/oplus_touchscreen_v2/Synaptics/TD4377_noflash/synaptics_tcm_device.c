@@ -448,7 +448,11 @@ static int device_release(struct inode *inp, struct file *filp)
 	return 0;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static char *device_devnode(const struct device *dev, umode_t *mode)
+#else
 static char *device_devnode(struct device *dev, umode_t *mode)
+#endif
 {
 	if (!mode) {
 		return NULL;
@@ -466,7 +470,11 @@ static int device_create_class(void)
 		return 0;
 	}
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	g_device_hcd->class = class_create(PLATFORM_DRIVER_NAME);
+#else
 	g_device_hcd->class = class_create(THIS_MODULE, PLATFORM_DRIVER_NAME);
+#endif
 
 	if (IS_ERR(g_device_hcd->class)) {
 		pr_err("Failed to create class\n");

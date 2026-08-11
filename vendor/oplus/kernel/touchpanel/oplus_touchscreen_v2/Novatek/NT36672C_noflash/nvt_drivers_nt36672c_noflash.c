@@ -82,6 +82,7 @@ static const struct nvt_ts_trim_id_table trim_id_table[] = {
 };
 
 #ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
 static const struct mtk_chip_config spi_ctrdata = {
 	.sample_sel = 0,
 	.cs_setuptime = 100,
@@ -89,6 +90,7 @@ static const struct mtk_chip_config spi_ctrdata = {
 	.cs_idletime = 0,
 	.tick_delay = 0,
 };
+#endif
 #endif /* end of  CONFIG_TOUCHPANEL_MTK_PLATFORM*/
 
 #define NVT_FUNC_ENTER() do { \
@@ -261,7 +263,7 @@ int nvt_output_data(int *buffer, struct chip_data_nt36672c *ts_data,
 	int num_each_line = 0;
 	int data_volumn = 0;
 
-	TPD_INFO("%s, enter pos[%d] length[%d]\n", __func__, *nvt_testdata->pos,
+	TPD_INFO("%s, enter pos[%lu] length[%lu]\n", __func__, *nvt_testdata->pos,
 		 nvt_testdata->length);
 
 	if (limit_type == NODE_MATCH) {
@@ -3369,6 +3371,7 @@ static fw_update_state nvt_fw_update_sub(void *chip_data,
 		const struct firmware *fw, bool force)
 {
 	int ret = 0;
+	int ret_fw_state = FW_UPDATE_SUCCESS;
 	uint8_t point_data[POINT_DATA_LEN + 2] = {0};
 	struct chip_data_nt36672c *chip_info = (struct chip_data_nt36672c *)chip_data;
 	struct touchpanel_data *ts = spi_get_drvdata(chip_info->s_client);
@@ -3390,19 +3393,19 @@ static fw_update_state nvt_fw_update_sub(void *chip_data,
 			request_fw_headfile->size = chip_info->g_fw_len;
 			request_fw_headfile->data = chip_info->g_fw_buf;
 			fw = request_fw_headfile;
+			ret_fw_state = FW_UPDATE_ERROR;
 
 		} else {
 			tp_healthinfo_report(monitor_data, HEALTH_FW_UPDATE,
 					     "Request fw from headfile");
-			TPD_INFO("request firmware failed, get from headfile\n");
 
+			ret_fw_state = FW_UPDATE_ERROR;
 			if (ts->firmware_in_dts && ts->firmware_in_dts->data) {
 				request_fw_headfile->size = ts->firmware_in_dts->size;
 				request_fw_headfile->data = ts->firmware_in_dts->data;
 				fw = request_fw_headfile;
 
 			} else {
-				TPD_INFO("firmware_data is NULL! exit firmware update!\n");
 				goto out_fail;
 			}
 		}
@@ -3501,7 +3504,7 @@ static fw_update_state nvt_fw_update_sub(void *chip_data,
 	}
 
 	tp_healthinfo_report(monitor_data, HEALTH_FW_UPDATE, "FW update Success");
-	return FW_UPDATE_SUCCESS;
+	return ret_fw_state;
 
 out_fail:
 	tp_devm_kfree(&chip_info->s_client->dev, (void **)&chip_info->bin_map,
@@ -6895,23 +6898,23 @@ int nvt_tp_probe(struct spi_device *client)
 	chip_info->using_headfile = false;
 
 	/*---prepare for spi parameter---*/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	if (ts->s_client->master->flags & SPI_MASTER_HALF_DUPLEX) {
 		TPD_INFO("Full duplex not supported by master\n");
 		ret = -EIO;
 		goto err_spi_setup;
 	}
-
+#endif
 	ts->s_client->bits_per_word = 8;
 	ts->s_client->mode = SPI_MODE_0;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	ts->s_client->chip_select = 0; /*modify reg=0 for more tp vendor share same spi interface*/
-
-
+#endif
 
 #ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
 	/* new usage of MTK spi API */
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
 /* init spi_device from mtk */
-	ts->s_client->max_speed_hz = 10 * 1000 * 1000;
 	ts->s_client->cs_setup.value = 1;
 	ts->s_client->cs_setup.unit = 0;
 	ts->s_client->cs_hold.value = 1;

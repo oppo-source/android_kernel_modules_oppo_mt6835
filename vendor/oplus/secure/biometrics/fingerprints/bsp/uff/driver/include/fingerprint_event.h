@@ -9,33 +9,47 @@
 #define FP_DRIVER_INTERRUPT (2)
 
 typedef enum netlink_cmd {
-    NETLINK_EVENT_TEST = 0,
-    NETLINK_EVENT_IRQ  = 1,
-    NETLINK_EVENT_SCREEN_OFF = 2,
-    NETLINK_EVENT_SCREEN_ON = 3,
+    NETLINK_EVENT_TEST         = 0,
+    NETLINK_EVENT_IRQ          = 1,
+    NETLINK_EVENT_SCREEN_OFF   = 2,
+    NETLINK_EVENT_SCREEN_ON    = 3,
     NETLINK_EVENT_TP_TOUCHDOWN = 4,
-    NETLINK_EVENT_TP_TOUCHUP = 5,
-    NETLINK_EVENT_UI_READY = 6,
+    NETLINK_EVENT_TP_TOUCHUP   = 5,
+    NETLINK_EVENT_UI_READY     = 6,
     NETLINK_EVENT_UI_DISAPPEAR = 7,
-    NETLINK_EVENT_EXIT = 8,
-    NETLINK_EVENT_INVALID,
+    NETLINK_EVENT_EXIT         = 8,
+    NETLINK_EVENT_INVALID      = 9,
+    NETLINK_EVENT_AIFILM_INFO  = 10,
+    NETLINK_EVENT_UNDERWATER_INFO = 11,
     NETLINK_EVENT_MAX
 } netlink_cmd_t;
 
 enum fingerprint_event {
-    E_FP_EVENT_TEST = 0,
-    E_FP_EVENT_IRQ = 1,
-    E_FP_EVENT_SCR_OFF = 2,
-    E_FP_EVENT_SCR_ON = 3,
-    E_FP_EVENT_TP_TOUCHDOWN = 4,
-    E_FP_EVENT_TP_TOUCHUP = 5,
-    E_FP_EVENT_UI_READY = 6,
-    E_FP_EVENT_UI_DISAPPEAR = 7,
+    E_FP_EVENT_TEST           = 0,
+    E_FP_EVENT_IRQ            = 1,
+    E_FP_EVENT_SCR_OFF        = 2,
+    E_FP_EVENT_SCR_ON         = 3,
+    E_FP_EVENT_TP_TOUCHDOWN   = 4,
+    E_FP_EVENT_TP_TOUCHUP     = 5,
+    E_FP_EVENT_UI_READY       = 6,
+    E_FP_EVENT_UI_DISAPPEAR   = 7,
     E_FP_EVENT_STOP_INTERRUPT = 8,
+    E_FP_EVENT_INVALID        = 9,
+    E_FP_EVENT_AIFILM_INFO    = 10,
+    E_FP_EVENT_MISTOUCH_UNCLASP   = 11,
+    E_FP_EVENT_MISTOUCH_CLASP     = 12,
+    E_FP_EVENT_UNDERWATER_INFO    = 13,
     E_FP_EVENT_MAX,
 };
 
-enum fingerprint_event_module {E_FP_TP = 0, E_FP_LCD = 1, E_FP_HAL = 2, E_FP_SENSOR = 3};
+enum fingerprint_event_module {
+    E_FP_TP     = 0,
+    E_FP_LCD    = 1,
+    E_FP_HAL    = 2,
+    E_FP_SENSOR = 3,
+    E_TP_AIFILM = 4,
+    E_FP_TP_GRIP = 5
+};
 
 struct fingerprint_message_t {
     int module;

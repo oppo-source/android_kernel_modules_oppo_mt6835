@@ -9,6 +9,7 @@
 #include <linux/notifier.h>
 #include <linux/types.h>
 #include <linux/gpio/consumer.h>
+#include <linux/power_supply.h>
 #include "include/oplus_fp_common.h"
 #include "include/fingerprint_event.h"
 #include "include/fp_health.h"
@@ -154,6 +155,11 @@ struct fp_key {
 #define FP_IOC_NETLINK_INIT _IO(FP_IOC_MAGIC, 29)
 #define FP_IOC_RD_NETLINK_VALUE _IO(FP_IOC_MAGIC, 30)
 #define FP_IOC_LHBM_TEMPERATURE _IO(FP_IOC_MAGIC, 31)
+#define FP_IOC_BATT_TEMPERATURE _IO(FP_IOC_MAGIC, 32)
+#define FP_IOC_FRAME_TEMPERATURE _IO(FP_IOC_MAGIC, 33)
+
+#define FP_IOC_INTR3_ENABLE _IO(FP_IOC_MAGIC, 34)
+#define FP_IOC_INTR3_DISABLE _IO(FP_IOC_MAGIC, 35)
 
 #define FP_IOC_FAULT_INJECT_BLOCK_MSG_CLEAN   _IO(FP_IOC_MAGIC, 401)
 #define FP_IOC_FAULT_INJECT_BLOCK_MSG_UP      _IO(FP_IOC_MAGIC, 402)
@@ -182,6 +188,34 @@ struct fp_key {
 #define FP_NET_EVENT_FB_UNBLACK 3
 #define NETLINKROUTE 25
 /************************************************/
+
+#define BATT_INVALID_TEMP (-100)
+#define FRAME_INVALID_TEMP (-100)
+
+// TP event notify chain
+/************************************************/
+#ifndef EVENT_ACTION_FOR_FILM
+#define EVENT_ACTION_FOR_FILM 0x02
+#endif
+
+#ifndef EVENT_ACTION_FOR_FP_GIRP
+#define EVENT_ACTION_FOR_FP_GIRP   0x03
+#endif
+
+#ifndef EVENT_ACTION_UNDER_WATER
+#define EVENT_ACTION_UNDER_WATER 0x04
+#endif
+
+struct fp_touch_film_info {
+    bool filmed;
+    int level;
+    bool trusty;
+};
+
+struct fp_touch_under_water_info {
+    bool is_underwater;
+};
+
 struct fp_dev {
     dev_t            devt;
     struct list_head device_entry;

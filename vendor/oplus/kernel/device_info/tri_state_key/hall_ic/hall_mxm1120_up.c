@@ -27,6 +27,7 @@
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 #include <linux/regulator/consumer.h>
+#include <linux/pinctrl/consumer.h>
 #include "hall_mxm1120.h"
 #include "../oplus_tri_key.h"
 
@@ -712,8 +713,8 @@ static int tri_key_m1120_parse_dt(struct device *dev,
 	if (p_data->esd_flag == true)
 		TRI_KEY_ERR("UP:enable esd flag is %d\n", p_data->esd_flag);
 
-	p_data->igpio = of_get_named_gpio_flags(dev->of_node,
-			"magnachip,gpio-int", 0, NULL);
+	p_data->igpio = of_get_named_gpio(dev->of_node,
+			"magnachip,gpio-int", 0);
 
 	p_data->irq_gpio =  of_get_named_gpio(np, "dhall,irq-gpio", 0);
 	TRI_KEY_LOG("irq_gpio : %d", p_data->irq_gpio);
@@ -995,6 +996,25 @@ int offect_data_handle(int offect)
 	return ret;
 }
 
+static int m1120_communicate_test(void)
+{
+	u8 id = 0;
+	int ret = -1;
+	if (p_m1120_data == NULL) {
+		TRI_KEY_ERR("p_m1120_data == NULL");
+		return ret;
+	}
+	ret = m1120_i2c_read_block(p_m1120_data, M1120_REG_DID, &id, 1);
+	if (ret < 0)
+		return ret;
+	if (id != M1120_VAL_DID) {
+		TRI_KEY_ERR("current device id(0x%02X) is not M1120 device id(0x%02X)",
+			id, M1120_VAL_DID);
+		ret = -1;
+	}
+	return 0;
+}
+
 struct dhall_operations  m1120_ups_ops = {
 	.get_data  = m1120_get_data,
 	.enable_irq = m1120_enable_irq,
@@ -1005,10 +1025,14 @@ struct dhall_operations  m1120_ups_ops = {
 	.dump_regs = m1120_dump_reg,
 	.set_reg = m1120_set_reg_1,
 	.is_power_on = m1120_is_power_on,
-	.offect_data_handle = offect_data_handle
+	.offect_data_handle = offect_data_handle,
+	.communicate_test = m1120_communicate_test,
 };
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static int tri_key_m1120_i2c_drv_probe(struct i2c_client *client)
+#else
 static int tri_key_m1120_i2c_drv_probe(struct i2c_client *client, const struct i2c_device_id *id)
+#endif
 {
 	struct m1120_data_t            *p_data;
 	struct extcon_dev_data	*hall_dev = NULL;
@@ -1074,7 +1098,6 @@ static int tri_key_m1120_i2c_drv_probe(struct i2c_client *client, const struct i
 		TRI_KEY_ERR("m1120_init_device was failed(%d)", err);
 		goto error_1;
 	}
-	TRI_KEY_LOG("%s was found", id->name);
 
 	/* set data offect if exist */
 	if (p_data->data_offect != 0) {

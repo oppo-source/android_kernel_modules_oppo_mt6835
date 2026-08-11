@@ -8,6 +8,7 @@
 #include <linux/gpio.h>
 #include <linux/string.h>
 #include <linux/thermal.h>
+#include <linux/of_gpio.h>
 
 #include "ft3518_core.h"
 
@@ -78,7 +79,8 @@ enum GESTURE_ID {
 	GESTURE_HEART_CLOCKWISE = 0x59,
 };
 
-
+#define I2C_CHANNEL 0
+static int oplus_i2c_channel(struct device *dev);
 /*******Part1:Call Back Function implement*******/
 static void fts_read_fod_info(struct chip_data_ft3518 *ts_data);
 static int fts_get_gesture_info(void *chip_data, struct gesture_info *gesture);
@@ -710,6 +712,7 @@ static int fts_get_rawdata(struct chip_data_ft3518 *ts_data, int *raw,
 	u8 raw_addr = 0;
 	u8 regval = 0;
 	u8 *buf = NULL;
+	u8 retval = 0;
 
 	TPD_INFO("%s:call", __func__);
 	/*kzalloc buffer*/
@@ -733,6 +736,11 @@ static int fts_get_rawdata(struct chip_data_ft3518 *ts_data, int *raw,
 
 		if (ret < 0) {
 			TPD_INFO("%s:write 0x01 to reg0x06 fail", __func__);
+			goto reg_restore;
+		}
+		retval = touch_i2c_read_byte(ts_data->client, FACTORY_REG_DATA_SELECT);
+		if (retval != 0x01) {
+			TPD_INFO("%s:read reg0x06 != 0x01, maybe write fail", __func__);
 			goto reg_restore;
 		}
 	}
@@ -1349,16 +1357,13 @@ static int fts_enable_charge_mode(struct chip_data_ft3518 *ts_data, bool enable)
 
 static int fts_enable_game_mode(struct chip_data_ft3518 *ts_data, bool enable)
 {
+	/*TODO, based on test result*/
+	TPD_INFO("MODE_GAME, write 0x86=%d", enable);
 	if (ts_data == NULL) {
 		return -ENOMEM;
 	}
-
-	/*TODO, based on test result*/
-	TPD_INFO("MODE_GAME, write 0x86=%d", enable);
-	if (ts_data->ts->aiunit_game_enable) {
-		touch_i2c_write_byte(ts_data->client, FTS_CMD_GAME_AIUINIT_EN, enable);
-		msleep(1);
-	}
+	touch_i2c_write_byte(ts_data->client, FTS_CMD_GAME_AIUINIT_EN, enable);
+	msleep(1);
 	return touch_i2c_write_byte(ts_data->client, FTS_REG_GAME_MODE_EN, !enable);
 }
 
@@ -1674,7 +1679,7 @@ static fw_check_state fts_fw_check(void *chip_data,
 
 	if (panel_data->manufacture_info.version) {
 		sprintf(dev_version, "%04x", panel_data->tp_fw);
-		strlcpy(&(panel_data->manufacture_info.version[7]), dev_version, 5);
+		strncpy(&(panel_data->manufacture_info.version[7]), dev_version, 5);
 	}
 
 	return FW_NORMAL;
@@ -1770,6 +1775,7 @@ static u32 fts_u32_trigger_reason(void *chip_data, int gesture_enable,
 			if(ret == 0x01) {
 				SET_BIT(result_event, IRQ_PALM);
 				TPD_INFO("fts_enable_palm_to_sleep enable\n");
+				return result_event;
 			}
 		}
 	}
@@ -1902,7 +1908,8 @@ static int fts_get_touch_points(void *chip_data, struct point_info *points,
 	struct touchpanel_snr *snr = ts_data->ts->snr;
 
 	if (buf[FTS_POINTS_ONE - 1] == 0xFF) {
-		ret = touch_i2c_read_byte(ts_data->client, FTS_REG_POINTS_LB);
+		if (ts_data->ft3518_grip_v2_support == FALSE)
+			ret = touch_i2c_read_byte(ts_data->client, FTS_REG_POINTS_LB);
 	} else {
 		ret = touch_i2c_read_block(ts_data->client, cmd, FTS_POINTS_TWO,
 					   &buf[FTS_POINTS_ONE]);
@@ -2419,9 +2426,6 @@ static int fts_diaphragm_touch_lv_set(void *chip_data, int level)
 	u8 retval = 0;
 	u8 diaphragm_mode = 0;
 
-	if (ts_data == NULL || ts_data->client == NULL) {
-		return 0;
-	}
 	TPD_INFO("%s:level=%d", __func__, level);
 	retval = touch_i2c_read_byte(ts_data->client, FTS_REG_DIAPHRAGM_EN);
 
@@ -2451,6 +2455,20 @@ static int fts_diaphragm_touch_lv_set(void *chip_data, int level)
 		return 0;
 	}
 	return 0;
+}
+
+static int fts_fp_unlock_status_write(void *chip_data, u8 value)
+{
+	struct chip_data_ft3518 *ts_data = (struct chip_data_ft3518 *)chip_data;
+	int ret = 0;
+
+	TPD_INFO("fts fp_unlock_status write %u", value);
+	if (value) {
+		ret = touch_i2c_write_byte(ts_data->client, FTS_REG_FP_UNLOCK_STATE, 0x01);
+	} else {
+		ret = touch_i2c_write_byte(ts_data->client, FTS_REG_FP_UNLOCK_STATE, 0);
+	}
+	return ret;
 }
 
 static void fts_get_water_mode(void *chip_data)
@@ -2640,6 +2658,28 @@ static struct aging_test_proc_operations ft3518_aging_test_ops = {
     .finish_aging_test  = ft3518_finish_aging_test,
 };
 
+/* add compatible solutions for i2c/spi on Casio */
+static int oplus_i2c_channel(struct device *dev)
+{
+	unsigned int switch_gpio;
+	int rc = 0;
+
+	switch_gpio = of_get_named_gpio(dev->of_node, "i2c_spi_switch", 0);
+	if (gpio_is_valid(switch_gpio)) {
+		rc = devm_gpio_request(dev, switch_gpio, "i2c_spi_switch");
+		if (rc) {
+			TPD_INFO("unable to request gpio [%d]\n", switch_gpio);
+		}
+		rc = gpio_direction_output(switch_gpio, I2C_CHANNEL);
+		if (rc) {
+			TPD_INFO("unable to set dir for switch_gpio rc=%d", rc);
+		}
+	} else {
+		TPD_INFO("swtich-gpio not specified\n");
+	}
+	return rc;
+}
+
 static int ft3518_parse_dts(struct chip_data_ft3518 *ts_data, struct i2c_client *client)
 {
 	struct device *dev;
@@ -2653,15 +2693,17 @@ static int ft3518_parse_dts(struct chip_data_ft3518 *ts_data, struct i2c_client 
 	TPD_INFO("%s:high_resolution_support is:%d %d\n", __func__, ts_data->high_resolution_support, ts_data->high_resolution_support_x8);
 	ts_data->read_buffer_support = of_property_read_bool(np, "read_buffer_support");
 	TPD_INFO("%s:read_buffer_support is:%d\n", __func__, ts_data->read_buffer_support);
+	ts_data->i2c_spi_compatible_support = of_property_read_bool(np, "i2c_spi_compatible_support");
+	TPD_INFO("%s:i2c_spi_compatible_support is:%d\n", __func__, ts_data->i2c_spi_compatible_support);
 	return 0;
 }
 
-static void fts_get_glove_mode(void *chip_data, int *enable)
+static void fts_get_glove_mode(void *chip_data, int *enable, int *count)
 {
 	int regval = 0;
 	struct chip_data_ft3518 *ts_data = (struct chip_data_ft3518 *)chip_data;
 
-	if (!ts_data || !enable) {
+	if (!ts_data || !enable || !count) {
 		TPD_INFO("Failed to get glove mode config, null pointer");
 		return;
 	}
@@ -2703,10 +2745,11 @@ static struct oplus_touchpanel_operations fts_ops = {
 	.set_high_frame_rate        = fts_set_high_frame_rate,
 	.set_gesture_state          = fts_set_gesture_state,
 	.send_temperature           = fts_send_temperature,
+	.diaphragm_touch_lv_set     = fts_diaphragm_touch_lv_set,
+	.fp_unlock_status_write     = fts_fp_unlock_status_write,
 	.get_glove_mode             = fts_get_glove_mode,
 	.get_water_mode             = fts_get_water_mode,
 	.force_water_mode           = fts_force_water_mode,
-	.diaphragm_touch_lv_set     = fts_diaphragm_touch_lv_set,
 	.rate_white_list_ctrl       = fts_rate_white_list_ctrl,
 	.aiunit_game_info           = fts_aiunit_game_info,
 	/*todo
@@ -2763,8 +2806,12 @@ static struct focal_debug_func focal_debug_ops = {
 	.dump_reg_sate          = focal_dump_reg_state,
 };
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static int fts_tp_probe(struct i2c_client *client)
+#else
 static int fts_tp_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
+#endif
 {
 	struct chip_data_ft3518 *ts_data;
 	struct touchpanel_data *ts = NULL;
@@ -2819,6 +2866,12 @@ static int fts_tp_probe(struct i2c_client *client,
 	ts->aging_test_ops = &ft3518_aging_test_ops;
 	ft3518_parse_dts(ts_data, client);
 
+	if(ts_data->i2c_spi_compatible_support) {
+		ret = oplus_i2c_channel(ts->dev);
+		if(ret < 0) {
+			TPD_INFO("%s, oplus_i2c_channel GPIO failed\n", __func__);
+		}
+	}
 	/*step5:register common touch*/
 	ret = register_common_touch_device(ts);
 

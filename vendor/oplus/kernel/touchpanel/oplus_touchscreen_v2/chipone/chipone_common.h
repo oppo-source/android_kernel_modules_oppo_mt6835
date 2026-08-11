@@ -99,7 +99,7 @@ struct cts_auto_test_operations {
 		struct auto_testdata *cts_testdata, struct test_item_info *p_test_item_info);
 	int (*test7)(struct seq_file *s, void *chip_data,
 		struct auto_testdata *cts_testdata, struct test_item_info *p_test_item_info);
-	
+
 	int (*black_screen_test1)(struct seq_file *s, void *chip_data,
 		struct auto_testdata *cts_testdata, struct test_item_info *p_test_item_info);
 	int (*black_screen_test2)(struct seq_file *s, void *chip_data,

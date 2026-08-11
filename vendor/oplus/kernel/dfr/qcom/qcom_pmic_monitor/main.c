@@ -44,7 +44,7 @@ static ssize_t pmic_history_count_show(struct kobject *kobj,
 	if (NULL == pmic_history_ptr) {
 		len += snprintf(&page[len], 16-len, "NULL\n");
 	} else {
-		len += snprintf(&page[len], 16-len, "%lu\n", pmic_history_ptr->log_count);
+		len += snprintf(&page[len], 16-len, "%llu\n", pmic_history_ptr->log_count);
 	}
     memcpy(buf,page,len);
 	return len;
@@ -183,7 +183,7 @@ static ssize_t poff_reason_show(struct kobject *kobj,
 				break;
 		}
 
-		len += snprintf(&page[len], 512-len, "PMIC|%d|0x%02X|0x%04X|%s %s (1/%lu)\n",
+		len += snprintf(&page[len], 512-len, "PMIC|%d|0x%02X|0x%04X|%s %s (1/%llu)\n",
 						pmic_device_index,
 						L1_poff_index==0?0:0x1<<(L1_poff_index-1),
 						L2_poff_index==0?0:0x1<<(L2_poff_index-1),
@@ -261,14 +261,14 @@ static ssize_t pon_reason_show(struct kobject *kobj,
 		if (QPNP_WARM_SEQ & pmic_first_record.pmic_pon_poff_reason[pmic_device_index].PON_ON_REASON) {
 			pon_warm_reset_reason1 = pmic_first_record.pmic_pon_poff_reason[pmic_device_index].PON_WARM_RESET_REASON1;
 			pon_warm_reset_index = ffs(pon_pon_reason1_reg_vaule);
-			len += snprintf(&page[len], 512-len, "PMIC|%d|0x%02X|WARM_SEQ:%s %s (1/%lu)\n",
+			len += snprintf(&page[len], 512-len, "PMIC|%d|0x%02X|WARM_SEQ:%s %s (1/%llu)\n",
 													pmic_device_index,
 													pon_pon_reason1_reg_vaule,
 													pon_pon_reason1_str[pon_index-1],
 													0==pon_warm_reset_index?"NULL":pon_warm_reset_reason1_str[pon_warm_reset_index-1],
 													pmic_history_count);
 		} else {
-			len += snprintf(&page[len], 512-len, "PMIC|%d|0x%02X|PON_SEQ:%s (1/%lu)\n",
+			len += snprintf(&page[len], 512-len, "PMIC|%d|0x%02X|PON_SEQ:%s (1/%llu)\n",
 													pmic_device_index,
 													pon_pon_reason1_reg_vaule,
 													pon_pon_reason1_str[pon_index-1],
@@ -409,7 +409,7 @@ static const char * const pmic_pon_fault_reason1[8] = {
 static const char * const pmic_pon_fault_reason2[8] = {
 	[0] = "UNKNOWN(0)",
 	[1] = "UNKNOWN(1)",
-	[2] = "UNKNOWN(2)",
+	[2] = "PMIC_RB",
 	[3] = "FAULT_N",
 	[4] = "FAULT_WATCHDOG",
 	[5] = "PBS_NACK",
@@ -460,10 +460,22 @@ static const struct pmic_pon_trigger_mapping pmic_pon_pon_trigger_map[] = {
 	{0x0085, "HARD_RESET"},
 	{0x0086, "RESIN_N"},
 	{0x0087, "KPDPWR_N"},
+	/* PM5100 USB PON trigger */
+	{0x0202, "USB_CHARGER"},
 	{0x0621, "RTC_ALARM"},
 	{0x0640, "SMPL"},
+	/* PMX75 USB PON trigger */
+	{0x18A0, "USB_CHARGER"},
 	{0x18C0, "PMIC_SID1_GPIO5"},
+	/* PMI632 USB PON trigger */
+	{0x2763, "USB_CHARGER"},
+	/* PM8350B USB PON trigger */
 	{0x31C2, "USB_CHARGER"},
+	/* PM8550B USB PON trigger */
+	/* PM7550BA USB PON trigger */
+	{0x71C2, "USB_CHARGER"},
+	/* PM7250B USB PON trigger */
+	{0x8732, "USB_CHARGER"},
 };
 
 static const struct pmic_pon_trigger_mapping pmic_pon_reset_trigger_map[] = {
@@ -512,6 +524,8 @@ int skip , struct PMICGen3RecordKernelStruct *pmic_record_ptr , struct PmicGen3P
 	int i;
 	u8 tmp_state;
 	u8 tmp_event;
+	u8 tmp_data0;
+	u8 tmp_data1;
 
 	if ((NULL == pmic_record_ptr) || (NULL == pon_log)) {
 		return -1;
@@ -520,7 +534,9 @@ int skip , struct PMICGen3RecordKernelStruct *pmic_record_ptr , struct PmicGen3P
 	for (i = 0 ; i < MAX_STATE_RECORDS ; i++) {
 		tmp_state = pmic_record_ptr->pmic_state_machine_log[i].state;
 		tmp_event = pmic_record_ptr->pmic_state_machine_log[i].event;
-		if(0 == tmp_state && 0 == tmp_event) {
+		tmp_data0 = pmic_record_ptr->pmic_state_machine_log[i].data0;
+		tmp_data1 = pmic_record_ptr->pmic_state_machine_log[i].data1;
+		if (0 == tmp_state && 0 == tmp_event) {
 			pon_log->state = 0;
 			pon_log->event = 0;
 			pon_log->data1 = 0;
@@ -532,10 +548,13 @@ int skip , struct PMICGen3RecordKernelStruct *pmic_record_ptr , struct PmicGen3P
 			((state == tmp_state) && (event == PMIC_PON_EVENT_PMIC_MAX)) /* match state */) {
 				if (skip > 0) {
 					skip = skip - 1;
+				} else if ((tmp_data0 == 0xC2) && (tmp_data1 == 0x71)) {    /* Identified as usb_charge, need to continue to determine the next sentence type*/
+					*pon_log = pmic_record_ptr->pmic_state_machine_log[i];
+					continue;
 				} else {
 					*pon_log = pmic_record_ptr->pmic_state_machine_log[i];
-					return i;
 				}
+			return i;
 		}
 	}
 
@@ -769,7 +788,7 @@ static ssize_t pmic_history_count_gen3_show(struct kobject *kobj,
 	if (NULL == pmic_history_ptr) {
 		len += snprintf(&page[len], 16-len, "NULL\n");
 	} else {
-		len += snprintf(&page[len], 16-len, "%lu\n", pmic_history_ptr->log_count);
+		len += snprintf(&page[len], 16-len, "%llu\n", pmic_history_ptr->log_count);
 	}
 	memcpy(buf, page, len);
 	return len;
@@ -818,7 +837,7 @@ static ssize_t poff_reason_gen3_show(struct kobject *kobj,
 		L1_poff_code = 0x08;
 		L2_poff_code = tmp_pon_log.data1 << 8 | tmp_pon_log.data0;
 		pmic_pon_log_parse(&tmp_pon_log, parse_log_str1);
-		len += snprintf(&page[len], 512-len, "PMIC|%d|0x%02X|0x%04X|%s (%lu)\n",
+		len += snprintf(&page[len], 512-len, "PMIC|%d|0x%02X|0x%04X|%s (%llu)\n",
 				show_count,
 				L1_poff_code,
 				L2_poff_code,
@@ -845,7 +864,7 @@ static ssize_t poff_reason_gen3_show(struct kobject *kobj,
 		} else {
 			snprintf(parse_log_str2, 32, "Can't find Fault_REASON3");
 		}
-		len += snprintf(&page[len], 512-len, "PMIC|%d|0x%02X|0x%04X|%s,%s (%lu)\n",
+		len += snprintf(&page[len], 512-len, "PMIC|%d|0x%02X|0x%04X|%s,%s (%llu)\n",
 				show_count,
 				L1_poff_code,
 				L2_poff_code,
@@ -887,7 +906,7 @@ static ssize_t poff_reason_gen3_show(struct kobject *kobj,
 				L2_poff_code = 0;
 				snprintf(parse_log_str2 , 32 , "can't find RESET_TRIGGER");
 			}
-			len += snprintf(&page[len], 512-len, "PMIC|%d|0x%02X|0x%04X|%s,%s,%s (%lu)\n",
+			len += snprintf(&page[len], 512-len, "PMIC|%d|0x%02X|0x%04X|%s,%s,%s (%llu)\n",
 							show_count,
 							L1_poff_code,
 							L2_poff_code,
@@ -896,7 +915,7 @@ static ssize_t poff_reason_gen3_show(struct kobject *kobj,
 							parse_log_str3,
 							pmic_history_count);
 	} else {
-		len += snprintf(&page[len], 512-len, "PMIC|%d|0x00|0x0000|Can't parse poff reason (%ld)\n", show_count, pmic_history_count);
+		len += snprintf(&page[len], 512-len, "PMIC|%d|0x00|0x0000|Can't parse poff reason (%lld)\n", show_count, pmic_history_count);
 	}
 	}
 
@@ -941,13 +960,13 @@ static ssize_t pon_reason_gen3_show(struct kobject *kobj,
 						&tmp_pon_log)) {
 			pon_code = tmp_pon_log.data1 << 8 | tmp_pon_log.data0;
 			pmic_pon_log_parse(&tmp_pon_log, parse_log_str1);
-			len += snprintf(&page[len], 512-len, "PMIC|%d|0x%04X|%s (%lu)\n",
+			len += snprintf(&page[len], 512-len, "PMIC|%d|0x%04X|%s (%llu)\n",
 							show_count,
 							pon_code,
 							parse_log_str1,
 							pmic_history_count);
 	} else {
-			len += snprintf(&page[len], 512-len, "PMIC|%d|0x00|Can't parse pon reason (%lu)\n", show_count, pmic_history_count);
+			len += snprintf(&page[len], 512-len, "PMIC|%d|0x00|Can't parse pon reason (%llu)\n", show_count, pmic_history_count);
 	}
 	}
 

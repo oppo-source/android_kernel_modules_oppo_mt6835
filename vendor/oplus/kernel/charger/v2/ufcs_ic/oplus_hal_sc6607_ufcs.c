@@ -272,8 +272,6 @@ static int sc6607_ufcs_write_msg(struct ufcs_dev *ufcs, unsigned char *buf, int 
 	if (!chip)
 		return -EINVAL;
 
-	if (chip->sc6607_buck)
-		mutex_lock(&chip->sc6607_buck->adc_read_lock);
 	rc = sc6607_write_byte(chip, SC6607_ADDR_TX_LENGTH, len);
 	if (rc < 0) {
 		chg_err("write tx buf len error, rc=%d\n", rc);
@@ -292,7 +290,7 @@ static int sc6607_ufcs_write_msg(struct ufcs_dev *ufcs, unsigned char *buf, int 
 	usleep_range(4000, 4000);
 err:
 	if (chip->sc6607_buck)
-		mutex_unlock(&chip->sc6607_buck->adc_read_lock);
+		sc6607_ufcs_get_value(chip->sc6607_buck);
 	return rc;
 }
 
@@ -410,8 +408,8 @@ static int sc6607_ufcs_enable(struct ufcs_dev *ufcs)
 
 	chip = ufcs->drv_data;
 
-	if (chip->sc6607_buck && chip->sc6607_buck->is_sc6607a)
-		sc6607a_set_dpdm_ctrl(chip->sc6607_buck, true);
+	if (chip->sc6607_buck)
+		sc6607_set_ufcs_enable(chip->sc6607_buck, true);
 
 	for (i = 0; i < SC6607_ENABLE_REG_NUM; i++) {
 		rc = sc6607_write_byte(chip, addr_buf[i], cmd_buf[i]);
@@ -448,8 +446,8 @@ static int sc6607_ufcs_disable(struct ufcs_dev *ufcs)
 		return rc;
 	}
 
-	if (chip->sc6607_buck && chip->sc6607_buck->is_sc6607a)
-		sc6607a_set_dpdm_ctrl(chip->sc6607_buck, false);
+	if (chip->sc6607_buck)
+		sc6607_set_ufcs_enable(chip->sc6607_buck, false);
 
 	return 0;
 }

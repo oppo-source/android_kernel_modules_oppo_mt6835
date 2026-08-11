@@ -169,6 +169,16 @@ static int goodix_test_item(struct seq_file *s, struct touchpanel_data *ts,
 		}
 	}
 
+	if (!gd_test_ops->test7) {
+		TPD_INFO("test%d not support\n", TYPE_TEST7);
+	} else {
+		ret = gd_test_ops->test7(s, ts->chip_data, NULL, NULL);
+		if (ret < 0) {
+			TPD_INFO("test%d failed! ret is %d\n", TYPE_TEST7, ret);
+			error_count++;
+		}
+	}
+
 	if (!gd_test_ops->auto_test_endoperation) {
 		TPD_INFO("not support gd_test_ops->auto_test_preoperation callback\n");
 

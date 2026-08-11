@@ -1151,7 +1151,7 @@ struct debug_info_proc_operations {
 	void (*gesture_rate)(struct seq_file *s, u16 *coord_arg, void *chip_data);
 	void (*get_delta_data)(void *chip_data, int32_t *deltadata);
 	void (*delta_snr_read)(struct seq_file *s, void *chip_data, uint32_t count);
-	void (*tp_limit_data_write)(void *chip_data, int32_t count);
+	void (*tp_data_record_write)(void *chip_data, int32_t count);
 };
 
 struct invoke_method {

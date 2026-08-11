@@ -37,6 +37,7 @@
  * through TouchComm command-response protocol.
  */
 
+#include <linux/sched/debug.h> /* for sched_show_task */
 #include "syna_tcm2.h"
 #include "syna_tcm2_platform.h"
 #include "tcm/synaptics_touchcom_core_dev.h"
@@ -54,6 +55,8 @@
 #include "synaptics_common.h"
 #include "touchpanel_healthinfo/touchpanel_healthinfo.h"
 #include "touchpanel_healthinfo/touchpanel_exception.h"
+#define CREATE_TRACE_POINTS
+#include "touchpanel_healthinfo/touchpanel_stats.h"
 #ifdef BUILD_BY_BAZEL
 #include <soc/oplus/touchpanel_event_notify.h>/* kernel 6.1 */
 #else
@@ -83,8 +86,23 @@
 #include <linux/mtk_panel_ext.h>
 #include <linux/mtk_disp_notify.h>
 #endif
+#ifndef CONFIG_REMOVE_OPLUS_FUNCTION
+#ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#include<mt-plat/mtk_boot_common.h>
+#else
+#include <soc/oplus/system/boot_mode.h>
+#endif
+#endif
 
 #include <linux/wait.h>
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+#ifdef CONFIG_HMBIRD_SCHED
+#ifndef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#include <linux/sched/sched_ext.h>
+#endif /* !CONFIG_TOUCHPANEL_MTK_PLATFORM */
+#include <linux/sched/hmbird_version.h>
+#endif
+#endif
 static DECLARE_WAIT_QUEUE_HEAD(state_waiter);
 
 extern struct platform_device *syna_spi_device;
@@ -144,6 +162,7 @@ static void syna_main_register(struct seq_file *s, void *chip_data);
 static void syna_reserve_read(struct seq_file *s, void *chip_data);
 static void syna_tp_data_record_write(void *chip_data, int count);
 static void syna_tcm_test_report(struct syna_tcm *tcm_info, u32 code);
+static void syna_delta_snr_read(struct seq_file *s, void *chip_data, uint32_t count);
 
 #ifndef CONFIG_REMOVE_OPLUS_FUNCTION
 #ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
@@ -154,6 +173,78 @@ extern enum boot_mode_t get_boot_mode(void);
 extern int get_boot_mode(void);
 #endif
 #endif
+
+void touch_call_notifier_fp(struct syna_tcm *tcm, struct fp_underscreen_info *fp_info)
+{
+	struct touchpanel_event event_data;
+	ktime_t timer;
+	ktime_t delta_time;
+
+	if (!tcm) {
+		return;
+	}
+
+	timer = ktime_get();
+
+	memset(&event_data, 0, sizeof(struct touchpanel_event));
+
+	event_data.touch_state = fp_info->touch_state;
+	event_data.area_rate = fp_info->area_rate;
+	event_data.x = fp_info->x;
+	event_data.y = fp_info->y;
+
+	touchpanel_event_call_notifier(EVENT_ACTION_FOR_FINGPRINT,
+		   (void *)&event_data);
+
+	if (tcm->health_monitor_support) {
+		if (event_data.touch_state == 1) {
+			if (!tcm->fp_down_cnt) {
+				tcm->fp_down_time = timer;
+			}
+			tcm->fp_down_cnt++;
+			tcm->fp_up_cnt = 0;
+		} else if (event_data.touch_state == 0) {
+			if (!tcm->fp_up_cnt) {
+				tcm->fp_up_time = timer;
+				delta_time = ktime_to_us(tcm->fp_up_time) - ktime_to_us(tcm->fp_down_time);
+				if (delta_time > 0 && delta_time <= FP_EVENT_COST_TIME_OVER_10MS) {
+					tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fp_event_cost_time_over_10ms_cnt");
+				} else if (delta_time > FP_EVENT_COST_TIME_OVER_10MS && delta_time <= FP_EVENT_COST_TIME_OVER_18MS) {
+					tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fp_event_cost_time_over_18ms_cnt");
+				} else if (delta_time > FP_EVENT_COST_TIME_OVER_18MS && delta_time <= FP_EVENT_COST_TIME_OVER_26MS) {
+					tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fp_event_cost_time_over_26ms_cnt");
+				}
+			}
+			tcm->fp_up_cnt++;
+			tcm->fp_down_cnt = 0;
+		}
+	}
+}
+
+void film_call_notifier_fp(struct syna_tcm *tcm, struct touch_film_info *film_info)
+{
+	touchpanel_event_call_notifier(EVENT_ACTION_FOR_FILM,
+		   (void *)film_info);
+}
+
+
+bool inline is_ftm_boot_mode(struct syna_tcm *tcm)
+{
+#ifndef CONFIG_REMOVE_OPLUS_FUNCTION
+#ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+
+	if ((tcm->boot_mode == META_BOOT || tcm->boot_mode == FACTORY_BOOT))
+#else
+	if ((tcm->boot_mode == MSM_BOOT_MODE__FACTORY
+	     || tcm->boot_mode == MSM_BOOT_MODE__RF || tcm->boot_mode == MSM_BOOT_MODE__WLAN))
+#endif
+	{
+		return true;
+	}
+
+#endif
+	return false;
+}
 
 /**
  * syna_dev_update_lpwg_status()
@@ -168,7 +259,7 @@ extern int get_boot_mode(void);
  */
 void syna_dev_update_lpwg_status(struct syna_tcm *tcm)
 {
-	tcm->lpwg_enabled = (tcm->gesture_type || tcm->touch_and_hold || (tcm->fp_active && !tcm->fp_prevent)) ? true : false;
+	tcm->lpwg_enabled = (tcm->gesture_type || tcm->touch_and_hold || (tcm->fp_active && !tcm->fp_prevent) || tcm->under_water_detect) ? true : false;
 	return;
 }
 
@@ -375,6 +466,8 @@ static int syna_dev_set_gesture_type(struct syna_tcm *tcm, unsigned short value)
 {
 	int retval = 0;
 
+	LOGI("%s: %u\n", __func__, value);
+
 	/* Bit0 -- Double Tap, Bit13 -- Single Tap */
 	retval = syna_tcm_set_dynamic_config(tcm->tcm_dev,
 			DC_GESTURE_TYPE_ENABLE,
@@ -405,10 +498,21 @@ exit:
 static int syna_dev_set_fingerprint_enable(struct syna_tcm *tcm, unsigned short value)
 {
 	int retval = 0;
+	unsigned short config = 0;
+
+	/*bit4 error finger debug event*/
+	retval = syna_tcm_get_dynamic_config(tcm->tcm_dev, DC_TOUCH_AND_HOLD, &config, RESP_IN_ATTN);
+	if (retval < 0) {
+		LOGE("Fail to disalbe HBP Active Frame report\n");
+	}
+
+	config = (config & 0xf0) | (value & 0x0f);
+
+	LOGI("HBP set touch_and_hold(0x%04x)\n", config);
 
 	retval = syna_tcm_set_dynamic_config(tcm->tcm_dev,
 			DC_TOUCH_AND_HOLD,
-			value,
+			config,
 			RESP_IN_ATTN);
 	if (retval < 0) {
 		LOGE("Fail to set gesture type\n");
@@ -643,7 +747,8 @@ static void syna_dev_report_input_events(struct syna_tcm *tcm)
 	unsigned int max_objects = tcm->tcm_dev->max_objects;
 	struct tcm_touch_data_blob *touch_data;
 	struct tcm_objects_data_blob *object_data;
-	struct touchpanel_event event_data;
+	struct fp_underscreen_info fp_info;
+	struct touchpanel_snr *snr = tcm->snr;
 
 	if (input_dev == NULL)
 		return;
@@ -661,51 +766,83 @@ static void syna_dev_report_input_events(struct syna_tcm *tcm)
 
 			if (touch_data->gesture_id == TOUCH_HOLD_DOWN) {
 				if (!tcm->is_fp_down) {
-					memset(&event_data, 0, sizeof(struct touchpanel_event));
-					event_data.touch_state = 1;
-					event_data.area_rate = 100;
-					event_data.x = touch_data->data_point[0] | (touch_data->data_point[1] << 8);
-					event_data.y = touch_data->data_point[2] | (touch_data->data_point[3] << 8);
-					touchpanel_event_call_notifier(EVENT_ACTION_FOR_FINGPRINT,
-						   (void *)&event_data);
+					memset(&fp_info, 0, sizeof(struct fp_underscreen_info));
+					fp_info.touch_state = 1;
+					fp_info.area_rate = 100;
+					fp_info.x = touch_data->data_point[0] | (touch_data->data_point[1] << 8);
+					fp_info.y = touch_data->data_point[2] | (touch_data->data_point[3] << 8);
+					touch_call_notifier_fp(tcm, &fp_info);
+
 					tcm->is_fp_down = true;
-					LOGI("screen off fingerprint down(%u %u)\n", event_data.x, event_data.y);
+					LOGI("screen off fingerprint down(%u %u)\n", fp_info.x, fp_info.y);
 					syna_send_signal(tcm, SIG_FINGER_DOWN);
-					LOGI("send finger singal to app.\n");
+					LOGI("send finger down singal to app.\n");
+					tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "screen_off_fp_down");
 				}/* else {
 					LOGI("repeat 'screen off fingerprint down' triggered\n");
 				}*/
 			} else if (touch_data->gesture_id == TOUCH_HOLD_UP) {
-				memset(&event_data, 0, sizeof(struct touchpanel_event));
-				event_data.touch_state = 0;
-				touchpanel_event_call_notifier(EVENT_ACTION_FOR_FINGPRINT,
-					   (void *)&event_data);
+				memset(&fp_info, 0, sizeof(struct fp_underscreen_info));
+				fp_info.touch_state = 0;
+				touch_call_notifier_fp(tcm, &fp_info);
 				tcm->is_fp_down = false;
 				LOGI("screen off fingerprint up\n");
+				syna_send_signal(tcm, SIG_FINGER_UP);
+				LOGI("send finger up singal to app.\n");
+				tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "screen_off_fp_up");
 			} else if (touch_data->gesture_id == FINGERPRINT_ERR_REPORT) {
-				LOGI("fingerprint error type:[%*ph]\n", 6, touch_data->extra_gesture_info);
+				LOGI("TP_FP_ERROR_REPORT:fingerprint error type:[%*ph]\n", 6, touch_data->extra_gesture_info);
 				switch (touch_data->extra_gesture_info[0]) {
 				case FINGERPRINT_AREA_NOT_MATCH:
 					if (tcm->health_monitor_support) {
 						tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fingerprint_area_not_match_count");
 					}
-					LOGI("FINGERPRINT_AREA_NOT_MATCH\n");
+					LOGI("TP_FP_ERROR_REPORT:area size: 0x%x\n", touch_data->extra_gesture_info[2]);
+					LOGI("TP_FP_ERROR_REPORT:FINGERPRINT_AREA_NOT_MATCH\n");
 					break;
 				case ANOTHER_FINGER_ON_NON_FP_ZONE:
 					if (tcm->health_monitor_support) {
 						tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "another_finger_on_non-fingerprint_zone_count");
 					}
-					LOGI("ANOTHER_FINGER_ON_NON_FP_ZONE\n");
+					LOGI("TP_FP_ERROR_REPORT:x:0x%x,y:0x%x\n", (touch_data->extra_gesture_info[3] << 8) + touch_data->extra_gesture_info[2],
+						(touch_data->extra_gesture_info[5] << 8) + touch_data->extra_gesture_info[4]);
+					LOGI("TP_FP_ERROR_REPORT:ANOTHER_FINGER_ON_NON_FP_ZONE\n");
 					break;
 				case FINGERPRINT_DOWN_BEFORE_FP_ENABLE:
 					if (tcm->health_monitor_support) {
 						tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fingerprint_down_before_fp_enable_count");
 					}
-					LOGI("FINGERPRINT_DOWN_BEFORE_FP_ENABLE\n");
+					LOGI("TP_FP_ERROR_REPORT:down time: 0x%x\n", touch_data->extra_gesture_info[2]);
+					LOGI("TP_FP_ERROR_REPORT:FINGERPRINT_DOWN_BEFORE_FP_ENABLE\n");
+					break;
+				case FINGERPRINT_OUT_MOVE_IN:
+					if (tcm->health_monitor_support) {
+						tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fingerprint_out_move_in_count");
+					}
+					LOGI("TP_FP_ERROR_REPORT:FINGERPRINT_OUT_MOVE_IN\n");
 					break;
 				default:
-					LOGI("unknown fingerprint error type: 0x%x\n", touch_data->extra_gesture_info[0]);
+					LOGI("TP_FP_ERROR_REPORT:unknown fingerprint error type: 0x%x\n", touch_data->extra_gesture_info[0]);
 					break;
+				}
+			} else if (touch_data->gesture_id == UNDER_WATER) {
+				if(!tcm->under_water){
+					tcm->under_water = TRUE;
+					input_report_key(input_dev, KEY_UNDER_WATER, 1);
+					input_sync(input_dev);
+					input_report_key(input_dev, KEY_UNDER_WATER, 0);
+					input_sync(input_dev);
+					touchpanel_event_call_notifier(EVENT_ACTION_UNDER_WATER, (void *)&tcm->under_water);
+					syna_send_signal(tcm, SIG_UNDER_WATER);
+				}
+			} else if (touch_data->gesture_id == ON_WATER) {
+				if(tcm->under_water){
+					tcm->under_water = FALSE;
+					input_report_key(input_dev, KEY_ON_WATER, 1);
+					input_sync(input_dev);
+					input_report_key(input_dev, KEY_ON_WATER, 0);
+					input_sync(input_dev);
+					touchpanel_event_call_notifier(EVENT_ACTION_UNDER_WATER, (void *)&tcm->under_water);
 				}
 			} else {
 				input_report_key(input_dev, KEY_F4, 1);
@@ -726,6 +863,12 @@ static void syna_dev_report_input_events(struct syna_tcm *tcm)
 	}
 
 	touch_count = 0;
+
+	if (tcm->snr_read_support) {
+		for (idx = 0; idx < max_objects; idx++) {
+			snr[idx].point_status = 0;
+		}
+	}
 
 	for (idx = 0; idx < max_objects; idx++) {
 		if (tcm->prev_obj_status[idx] == LIFT &&
@@ -748,6 +891,15 @@ static void syna_dev_report_input_events(struct syna_tcm *tcm)
 			y = object_data[idx].y_pos;
 			wx = object_data[idx].x_width;
 			wy = object_data[idx].y_width;
+			if (tcm->snr_read_support) {
+				if (snr[idx].doing && x && y ) {
+					snr[idx].point_status = 1;
+					snr[idx].x = x;
+					snr[idx].y = y;
+					snr[idx].channel_x = snr[idx].x * tcm->tx_num / tcm->input_dev_params.max_x;
+					snr[idx].channel_y = snr[idx].y * tcm->rx_num / tcm->input_dev_params.max_y;
+				}
+			}
 #ifdef REPORT_SWAP_XY
 			x = x ^ y;
 			y = x ^ y;
@@ -874,6 +1026,10 @@ static int syna_dev_create_input_device(struct syna_tcm *tcm)
 #ifdef ENABLE_WAKEUP_GESTURE
 	set_bit(KEY_F4, input_dev->keybit);
 	input_set_capability(input_dev, EV_KEY, KEY_F4);
+	set_bit(KEY_UNDER_WATER, input_dev->keybit);
+	input_set_capability(input_dev, EV_KEY, KEY_UNDER_WATER);
+	set_bit(KEY_ON_WATER, input_dev->keybit);
+	input_set_capability(input_dev, EV_KEY, KEY_ON_WATER);
 #endif
 
 	input_set_abs_params(input_dev,
@@ -1018,12 +1174,26 @@ exit:
 	return retval;
 }
 
+static enum hrtimer_restart set_insert_timestamp(struct hrtimer *timer)
+{
+	struct syna_tcm *tcm = container_of(timer, struct syna_tcm, insert_timestamp_timer);
+
+	if (tcm->input_dev && tcm->primary_timestamp_enabled > 1) {
+		input_set_timestamp(tcm->input_dev, ktime_get());
+	}
+	return HRTIMER_NORESTART;
+}
+
 static irqreturn_t tp_top_irq_thread_fn(int irq, void *data)
 {
 	struct syna_tcm *tcm = data;
 
 	if (tcm->input_dev && tcm->primary_timestamp_enabled) {
 		input_set_timestamp(tcm->input_dev, ktime_get());
+		if (tcm->primary_timestamp_enabled > 1) {
+			hrtimer_start(&tcm->insert_timestamp_timer,
+					ktime_set(0, 1000 * 1000 * 1000 / tcm->primary_timestamp_enabled), HRTIMER_MODE_REL);
+		}
 	}
 
 	return IRQ_WAKE_THREAD;
@@ -1039,7 +1209,16 @@ static bool monitor_irq_bus_ready(struct syna_tcm *tcm)
 	if (false == tcm->bus_ready) {
 		moni->irq_need_dev_resume_all_count++;
 		moni->irq_bus_not_ready_count++;
-		TP_INFO(tcm->tp_index, "The device not resume 30 ms!");
+		TP_INFO(tcm->tp_index, "The device not resume %d ms!", tcm->irq_need_dev_resume_time);
+		/*
+		if (tcm->suspend_task && tcm->supspend_task_error_cnt < MAX_SUSPEND_TASK_DUMP_COUNT) {
+			tcm->supspend_task_error_cnt++;
+			sched_show_task(tcm->suspend_task);
+		}
+		*/
+		if (tcm->exception_upload_support) {
+			tp_exception_report(&tcm->exception_data, EXCEP_BUS_READY, "device not resume", sizeof("device not resume"));
+		}
 		return false;
 	} else {/*device resume end*/
 		if (moni->irq_bus_not_ready_count > moni->irq_need_dev_resume_max_count) {
@@ -1066,7 +1245,7 @@ static void syna_get_diff_data_record(struct syna_tcm *tcm)
 		return;
 	}
 
-	if (!tcm->differ_read_every_frame || tp_hbp_debug != LEVEL_DEBUG) {
+	if (!tcm->differ_read_every_frame || (tp_hbp_debug != LEVEL_DEBUG && tp_hbp_debug != LEVEL_DEBUG_SC_OFF)) {
 		LOGD("differ_read_every_frame is false or debug_level < 2\n");
 		return;
 	}
@@ -1168,7 +1347,20 @@ static irqreturn_t syna_dev_isr(int irq, void *data)
 		goto exit;
 
 	tcm->isr_pid = current->pid;
-
+#if defined(CONFIG_HMBIRD_SCHED) || defined(CONFIG_HMBIRD_SCHED_GKI)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	if (HMBIRD_GKI_VERSION == get_hmbird_version_type()) {
+		#ifndef CONFIG_TOUCHPANEL_MTK_PLATFORM
+		/*Only Qcom support GKI hmbird*/
+		sched_set_sched_prop(current, SCHED_PROP_DEADLINE_LEVEL2);
+		#endif /* !CONFIG_TOUCHPANEL_MTK_PLATFORM */
+	} else if (HMBIRD_OGKI_VERSION == get_hmbird_version_type()) {
+		hmbird_set_sched_prop(current, SCHED_PROP_DEADLINE_LEVEL2);
+	}
+#else
+	sched_set_sched_prop(current, SCHED_PROP_DEADLINE_LEVEL2);
+#endif /* (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)) */
+#endif
 #ifdef HAS_SYSFS_INTERFACE
 	if (tcm->is_attn_redirecting) {
 		syna_cdev_redirect_attn(tcm);
@@ -1181,7 +1373,7 @@ static irqreturn_t syna_dev_isr(int irq, void *data)
 		/*TP_INFO(tcm->tp_index, "Wait device resume!");*/
 		wait_event_interruptible_timeout(tcm->wait,
 						 tcm->bus_ready,
-						 msecs_to_jiffies(30));
+						 msecs_to_jiffies(tcm->irq_need_dev_resume_time));
 		/*TP_INFO(tcm->tp_index, "Device maybe resume!");*/
 	}
 
@@ -1197,7 +1389,6 @@ static irqreturn_t syna_dev_isr(int irq, void *data)
 		LOGE("Fail to get event data\n");
 		goto exit;
 	}
-
 	if (code == REPORT_DELTA || code == REPORT_RAW || code == REPORT_DEBUG) {
 		syna_tcm_test_report(tcm, code);
 		goto exit;
@@ -1532,8 +1723,12 @@ static void syna_dev_reflash_startup_work(struct work_struct *work)
 		if (tcm->exception_upload_support) {
 			tp_exception_report(&tcm->exception_data, EXCEP_FW_UPDATE, "FW_Request_Failed", sizeof("FW_Request_Failed"));
 		}
+		if (tcm->stats_upload_support) {
+			trace_stats_report(TOUCH_STATS_FW_UPDATE_FAULT, PLATFORM_DRIVER_NAME, tcm->panel_data.manufacture_info.version, "FW_Request_Failed");
+		}
 		complete(&tcm->fw_complete);
 		syna_pal_mutex_unlock(&tcm->extif_mutex);
+		tcm->is_update_log = 1;
 		return;
 	}
 
@@ -1568,6 +1763,9 @@ static void syna_dev_reflash_startup_work(struct work_struct *work)
 		}
 		if (tcm->exception_upload_support) {
 			tp_exception_report(&tcm->exception_data, EXCEP_FW_UPDATE, "FW_Update_Failed", sizeof("FW_Update_Failed"));
+		}
+		if (tcm->stats_upload_support) {
+			trace_stats_report(TOUCH_STATS_FW_UPDATE_FAULT, PLATFORM_DRIVER_NAME, tcm->panel_data.manufacture_info.version, "FW_Update_Failed");
 		}
 		syna_pal_mutex_unlock(&hw_if->bdata_rst.reset_en_mutex);
 		/*if probe_status is not exit, olc will update log*/
@@ -1677,6 +1875,9 @@ static void syna_dev_fw_update_in_bl(struct syna_tcm *tcm)
 		if (tcm->exception_upload_support) {
 			tp_exception_report(&tcm->exception_data, EXCEP_FW_UPDATE, "FW_Request_Failed", sizeof("FW_Request_Failed"));
 		}
+		if (tcm->stats_upload_support) {
+			trace_stats_report(TOUCH_STATS_FW_UPDATE_FAULT, PLATFORM_DRIVER_NAME, tcm->panel_data.manufacture_info.version, "FW_Request_Failed");
+		}
 		if (locked) {
 			syna_pal_mutex_unlock(&tcm->extif_mutex);
 		}
@@ -1714,6 +1915,9 @@ static void syna_dev_fw_update_in_bl(struct syna_tcm *tcm)
 		}
 		if (tcm->exception_upload_support) {
 			tp_exception_report(&tcm->exception_data, EXCEP_FW_UPDATE, "FW_Update_Failed", sizeof("FW_Update_Failed"));
+		}
+		if (tcm->stats_upload_support) {
+			trace_stats_report(TOUCH_STATS_FW_UPDATE_FAULT, PLATFORM_DRIVER_NAME, tcm->panel_data.manufacture_info.version, "FW_Update_Failed");
 		}
 		syna_pal_mutex_unlock(&hw_if->bdata_rst.reset_en_mutex);
 		goto exit;
@@ -1842,10 +2046,33 @@ static int syna_dev_enter_lowpwr_sensing(struct syna_tcm *tcm)
 }
 #endif
 
+static bool is_touch_daemon(struct task_struct *t)
+{
+	if (!t)
+		return false;
+
+	if (!strcmp(t->comm, "touchDaemon"))
+		return true;
+
+	LOGE("app pid name: %s\n", t->comm);
+	return false;
+}
+
 void syna_send_signal(struct syna_tcm *tcm, int signal_num)
 {
-	if(tcm->proc_task != NULL && tcm->char_dev_ref_count) {
-		LOGI("Sending signal[%d] to app\n", signal_num);
+	tcm->proc_task = pid_task(find_vpid(tcm->proc_pid), PIDTYPE_PID);
+	if (!tcm->proc_task) {
+		LOGE("Fail to locate task, pid: %d\n", (unsigned int)tcm->proc_pid);
+		return;
+	}
+
+	if (!is_touch_daemon(tcm->proc_task)) {
+		LOGE("app pid: %d is not touchDaemon\n", (unsigned int)tcm->proc_pid);
+		return;
+	}
+
+	if (tcm && tcm->proc_task != NULL && tcm->char_dev_ref_count && tcm->proc_pid != 0) {
+		LOGI("Sending signal[%d] to app pid: %d\n", signal_num, (unsigned int)tcm->proc_pid);
 		if (send_sig(signal_num, tcm->proc_task, 0) < 0) {
 			LOGE("Unable to send signal\n");
 		}
@@ -1893,6 +2120,7 @@ static void syna_speedup_resume(struct work_struct *work)
 	struct syna_hw_interface *hw_if = tcm->hw_if;
 	bool irq_enabled = true;
 	u64 start_time = 0;
+	unsigned short config = 0;
 
 	LOGI("%s is called\n", __func__);
 
@@ -1916,7 +2144,27 @@ static void syna_speedup_resume(struct work_struct *work)
 	};
 
 	tcm->sub_pwr_state = SUB_PWR_RESUMING;
-
+	if ((tcm->gesture_type) || (tcm->touch_and_hold)) {
+		retval = syna_tcm_get_dynamic_config(tcm->tcm_dev, DC_GESTURE_TYPE_ENABLE, &config, 0);
+		if (retval < 0) {
+			LOGI("get GESTURE_TYPE : ERROR\n");
+		} else {
+			LOGI("get GESTURE : %d\n", config);
+		}
+		retval = syna_tcm_get_dynamic_config(tcm->tcm_dev, DC_TOUCH_AND_HOLD, &config, 0);
+		if (retval < 0) {
+			LOGI("get TOUCH_AND_HOLD : ERROR\n");
+		} else {
+			LOGI("get TOUCH_AND_HOLD : %d\n", config);
+		}
+		/* DC_IN_WAKEUP_GESTURE_MODE = 0x09 */
+		retval = syna_tcm_get_dynamic_config(tcm->tcm_dev, 0x09, &config, 0);
+		if (retval < 0) {
+			LOGI("get GET WAKEUP_GESTURE_MODE : ERROR\n");
+		} else {
+			LOGI("get WAKEUP_GESTURE_MODE : %d\n", config);
+		}
+	}
 	LOGI("Prepare to resume device\n");
 
 	/* set irq back to active mode if not enabled yet */
@@ -1927,6 +2175,15 @@ static void syna_speedup_resume(struct work_struct *work)
 		hw_if->ops_enable_irq(hw_if, true);
 
 #ifdef RESET_ON_RESUME
+	// will disable DC_SET_DIFFER_READ when resume.
+	if (tcm->tp_data_record_support && tcm->differ_read_every_frame) {
+		retval = syna_tcm_set_dynamic_config(tcm->tcm_dev, 0xF3, 0, RESP_IN_ATTN);
+		if (retval < 0) {
+			LOGE("Fail to disable DC_SET_DIFFER_READ\n");
+		}
+		LOGI("Disable DC_SET_DIFFER_READ after resume.\n");
+	}
+
 	if ((!tcm->is_fp_down)||(tcm->pwr_state == PWR_UNKNOWN)) {
 		if (tcm->probe_done && tcm->tcm_dev->firmware_mode_count % FWUPDATE_BL_MAX == 0 && tcm->tcm_dev->firmware_mode_count) {
 			LOGE("bootloader trigger fw update\n");
@@ -1939,15 +2196,6 @@ static void syna_speedup_resume(struct work_struct *work)
 
 		if (hw_if->ops_hw_reset) {
 			hw_if->ops_hw_reset(hw_if);
-
-			if (tcm->tp_data_record_support && tcm->differ_read_every_frame) {
-				retval = syna_tcm_set_dynamic_config(tcm->tcm_dev, 0xF3, 1, RESP_IN_ATTN);
-				if (retval < 0) {
-					LOGE("Fail to enable DC_SET_DIFFER_READ\n");
-				}
-				LOGI("Enable DC_SET_DIFFER_READ after resume\n");
-				tcm->differ_read_every_frame = true;
-			}
 		} else {
 			retval = syna_tcm_reset(tcm->tcm_dev);
 			if (retval < 0) {
@@ -1991,6 +2239,7 @@ static void syna_speedup_resume(struct work_struct *work)
 	}
 #endif
 	tcm->pwr_state = PWR_ON;
+	tcm->under_water = false;
 
 	LOGI("Prepare to set up application firmware\n");
 
@@ -2035,9 +2284,9 @@ static int syna_dev_suspend(struct device *dev)
 #endif
 	struct syna_tcm *tcm = dev_get_drvdata(dev);
 	struct syna_hw_interface *hw_if = tcm->hw_if;
-	struct touchpanel_event event_data;
 	bool irq_disabled = true;
 	u64 start_time = 0;
+	struct fp_underscreen_info fp_info;
 
 	/* exit directly if device is already in suspend state */
 	if (tcm->pwr_state != PWR_ON)
@@ -2050,11 +2299,11 @@ static int syna_dev_suspend(struct device *dev)
 		}
 	}
 
-	mutex_lock(&tcm->mutex);
+	/*mutex_lock(&tcm->mutex);*/
 
 	if (IS_REMOVE == tcm->driver_current_state) {
 		LOGE("%s:driver is remove!!\n", __func__);
-		mutex_unlock(&tcm->mutex);
+		/*mutex_unlock(&tcm->mutex);*/
 		return -EINVAL;
 	};
 
@@ -2079,7 +2328,7 @@ static int syna_dev_suspend(struct device *dev)
 	if (retval < 0) {
 		tcm->pwr_state = PWR_UNKNOWN;
 		LOGE("Fail to enter suspended power mode, tcm->pwr_state: %d.\n", tcm->pwr_state);
-		mutex_unlock(&tcm->mutex);
+		/*mutex_unlock(&tcm->mutex);*/
 		return retval;
 	}
 	tcm->pwr_state = LOW_PWR;
@@ -2089,10 +2338,14 @@ static int syna_dev_suspend(struct device *dev)
 #endif
 	/*report fingerprint up in suspend*/
 	/*tcm->is_fp_down = false;*/
-	memset(&event_data, 0, sizeof(struct touchpanel_event));
-	touchpanel_event_call_notifier(EVENT_ACTION_FOR_FINGPRINT,
-		   (void *)&event_data);
-	LOGI("[compensate]Report UP event to fingerprint notifier\n");
+	if (!tcm->fingerprint_not_report_in_suspend) {
+		memset(&fp_info, 0, sizeof(struct fp_underscreen_info));
+		touch_call_notifier_fp(tcm, &fp_info);
+
+		LOGI("[compensate]Report UP event to fingerprint notifier\n");
+	} else {
+		LOGI("not report fp up\n");
+	}
 
 	/* once lpwg is enabled, irq should be alive.
 	 * otherwise, disable irq in suspend.
@@ -2109,7 +2362,7 @@ static int syna_dev_suspend(struct device *dev)
 	syna_cdev_update_power_state_report_queue(tcm, true);
 
 	tcm->sub_pwr_state = SUB_PWR_SUSPEND_DONE;
-	mutex_unlock(&tcm->mutex);
+	/*mutex_unlock(&tcm->mutex);*/
 
 	if (tcm->health_monitor_support) {
 		tp_healthinfo_report(&tcm->monitor_data, HEALTH_SUSPEND, &start_time);
@@ -2117,7 +2370,13 @@ static int syna_dev_suspend(struct device *dev)
 			tcm->monitor_data.bus_not_ready_tp_suspend_count++;
 		}
 	}
-
+	if (tcm->tp_data_record_support && tcm->differ_read_every_frame) {
+		retval = syna_tcm_set_dynamic_config(tcm->tcm_dev, 0xF3, 1, RESP_IN_ATTN);
+		if (retval < 0) {
+			LOGE("Fail to enable DC_SET_DIFFER_READ\n");
+		}
+		LOGI("Enable DC_SET_DIFFER_READ after suspend.\n");
+	}
 	return 0;
 }
 
@@ -2164,7 +2423,11 @@ static int syna_dev_early_suspend(struct device *dev)
 		return -EINVAL;
 	};
 
-	tcm->touch_and_hold = 1;
+	if (tcm->syna_screenon_fingerprint_mode) {
+		tcm->touch_and_hold = 1 << FINGERPIRNT_SCREEN_OFF_ENABLE_BIT | 1 << FINGERPIRNT_SCREEN_ON_ENABLE_BIT;
+	} else {
+		tcm->touch_and_hold = 1;
+	}
 	syna_dev_update_lpwg_status(tcm);
 	syna_dev_set_fingerprint_enable(tcm, tcm->touch_and_hold);
 
@@ -2187,12 +2450,12 @@ static int syna_dev_early_suspend(struct device *dev)
 
 	tcm->slept_in_early_suspend = true;
 
-	mutex_unlock(&tcm->mutex);
+	/*if (tcm->fp_active) {*/
+	syna_dev_suspend(dev);
+	tcm->fb_ready = 0;
+	/*}*/
 
-	if (tcm->fp_active) {
-		syna_dev_suspend(dev);
-		tcm->fb_ready = 0;
-	}
+	mutex_unlock(&tcm->mutex);
 
 	return 0;
 }
@@ -2271,15 +2534,22 @@ static void ts_panel_notifier_callback(enum panel_event_notifier_tag tag,
 				flush_workqueue(tcm->speedup_resume_wq);        /*wait speedup_resume_wq done*/
 			}
 			syna_dev_early_suspend(&tcm->pdev->dev);
-		} else if (!tcm->fp_active) {
+		}/* else if (!tcm->fp_active) {
 			syna_dev_suspend(&tcm->pdev->dev);
 			tcm->fb_ready = 0;
-		}
+		}*/
 		break;
 	case DRM_PANEL_EVENT_BLANK_LP:
 		LOGI("received lp event\n");
 		if (!notification->notif_data.early_trigger) {
-			syna_dev_suspend(&tcm->pdev->dev);
+			if (tcm->speedup_resume_wq) {
+				flush_workqueue(tcm->speedup_resume_wq);        /*wait speedup_resume_wq done*/
+			}
+			syna_dev_early_suspend(&tcm->pdev->dev);
+			/*if (!tcm->fp_active) {
+				syna_dev_suspend(&tcm->pdev->dev);
+				tcm->fb_ready = 0;
+			}*/
 		}
 		break;
 	case DRM_PANEL_EVENT_FPS_CHANGE:
@@ -2347,10 +2617,10 @@ static int ts_mtk_drm_notifier_callback(struct notifier_block *nb,
 			syna_dev_resume(&tcm->pdev->dev);
 			tcm->fb_ready++;
 #endif
-		} else if (*blank == MTK_DISP_BLANK_POWERDOWN && !tcm->fp_active) {
+		}/* else if (*blank == MTK_DISP_BLANK_POWERDOWN && !tcm->fp_active) {
 			syna_dev_suspend(&tcm->pdev->dev);
 			tcm->fb_ready = 0;
-		}
+		}*/
 	break;
 	default:
 		LOGE("nuknown event :%lu\n", event);
@@ -2418,12 +2688,12 @@ static int fb_notifier_callback(struct notifier_block *self, unsigned long event
 				syna_dev_early_suspend(&tcm->pdev->dev);
 #if IS_ENABLED(CONFIG_DRM_MSM) || IS_ENABLED(CONFIG_DRM_OPLUS_NOTIFY)
 
-			} else if (event == MSM_DRM_EVENT_BLANK) {   /*event*/
+			/*} else if (event == MSM_DRM_EVENT_BLANK) {*/   /*event*/
 #else
-			} else if (event == FB_EVENT_BLANK && !tcm->fp_active) {   /*event*/
+			/*} else if (event == FB_EVENT_BLANK && !tcm->fp_active) {*/   /*event*/
 #endif
-				syna_dev_suspend(&tcm->pdev->dev);
-				tcm->fb_ready = 0;
+				/*syna_dev_suspend(&tcm->pdev->dev);
+				tcm->fb_ready = 0;*/
 			}
 
 #if IS_ENABLED(CONFIG_DRM_MSM) || IS_ENABLED(CONFIG_DRM_OPLUS_NOTIFY)
@@ -2721,7 +2991,8 @@ static struct syna_auto_test_operations syna_tcm_test_ops = {
 	.test8       =  syna_trex_shortcustom_test,
 	.test9       =  syna_hybrid_diffcbc_test,
 	.test10      =  syna_hybrid_absnoise_test,
-	.test11       =  syna_hybrid_rawcap_test_ad,
+	.test11      =  syna_hybrid_rawcap_test_ad,
+	.test12      =  syna_rst_test,
 	/*.syna_auto_test_enable_irq    =  synaptics_test_enable_interrupt,*/
 	/*.syna_auto_test_preoperation  =  synaptics_auto_test_preoperation,*/
 	/*.syna_auto_test_endoperation  =  synaptics_auto_test_endoperation,*/
@@ -2738,6 +3009,7 @@ static struct debug_info_proc_operations syna_debug_proc_ops = {
 	.main_register_read = syna_main_register,
 	.reserve_read  = syna_reserve_read,
 	.tp_data_record_write = syna_tp_data_record_write,
+	.delta_snr_read = syna_delta_snr_read,
 };
 
 static void syna_start_aging_test(void *chip_data)
@@ -2788,7 +3060,7 @@ static struct device_node* is_support_child_node(struct device *dev, struct syna
 static void init_panel_config(struct device *dev, struct syna_tcm *tcm)
 {
 	int rc = 0;
-	int tx_rx_num[2];
+	int tx_rx_num[2], panel_coords[2];
 	struct device_node *child_node = NULL;
 
 	child_node = is_support_child_node(dev, tcm);
@@ -2809,6 +3081,19 @@ static void init_panel_config(struct device *dev, struct syna_tcm *tcm)
 		tcm->tx_num = tx_rx_num[0];
 		tcm->rx_num = tx_rx_num[1];
 	}
+	rc = of_property_read_u32_array(child_node, "touchpanel,panel-coords", panel_coords, 2);
+
+	if (rc) {
+		TP_INFO(tcm->tp_index, "panel-coords not set\n");
+		tcm->dts_max_x = 0;
+		tcm->dts_max_y = 0;
+
+	} else {
+		tcm->dts_max_x = panel_coords[0];
+		tcm->dts_max_y = panel_coords[1];
+	}
+
+	TP_INFO(tcm->tp_index, "dts_max_x = %d, dts_max_y = %d \n", tcm->dts_max_x, tcm->dts_max_y);
 }
 
 static int init_chip_dts(struct device *dev, void *chip_data)
@@ -2974,8 +3259,27 @@ static int init_chip_dts(struct device *dev, void *chip_data)
 
 	TP_INFO(tcm->tp_index, "dts_max_x = %d, dts_max_y = %d \n", tcm->dts_max_x, tcm->dts_max_y);
 
+	rc = of_property_read_u32(np, "touchpanel,irq_need_dev_resume_time", &tcm->irq_need_dev_resume_time);
+	if (rc) {
+		TP_INFO(tcm->tp_index, "tcm->irq_need_dev_resume_time not specified\n");
+		tcm->irq_need_dev_resume_time = 30;
+	}
+	TP_INFO(tcm->tp_index, "tcm->irq_need_dev_resume_time = %d \n", tcm->irq_need_dev_resume_time);
+
 	tcm->tp_data_record_support = of_property_read_bool(np, "tp_data_record_support");
 	TP_INFO(tcm->tp_index, "tp_data_record_support = %d \n", tcm->tp_data_record_support);
+
+	tcm->stats_upload_support = of_property_read_bool(np, "stats_upload_support");
+	TP_INFO(tcm->tp_index, "stats_upload_support = %d \n", tcm->stats_upload_support);
+
+	tcm->fingerprint_not_report_in_suspend = of_property_read_bool(np, "fingerprint_not_report_in_suspend");
+	TP_INFO(tcm->tp_index, "fingerprint_not_report_in_suspend = %d \n", tcm->fingerprint_not_report_in_suspend);
+
+	tcm->snr_read_support = of_property_read_bool(np, "snr_read_support");
+	TP_INFO(tcm->tp_index, "stats_upload_support = %d \n", tcm->snr_read_support);
+
+	tcm->syna_screenon_fingerprint_mode = of_property_read_bool(np, "syna_screenon_fingerprint_mode");
+	TP_INFO(tcm->tp_index, "syna_screenon_fingerprint_mode = %d \n", tcm->syna_screenon_fingerprint_mode);
 
 	/* S3910_PANEL7 */
 	init_panel_config(dev, tcm);
@@ -3256,7 +3560,7 @@ static int syna_dev_probe(struct platform_device *pdev)
 	tcm->dev_disconnect = syna_dev_disconnect;
 	tcm->dev_set_up_app_fw = syna_dev_set_up_app_fw;
 	tcm->dev_resume = syna_dev_resume;
-	tcm->dev_suspend = syna_dev_suspend;
+	tcm->dev_suspend = syna_dev_early_suspend;
 
 	tcm->engineer_ops = &syna_tcm_engineer_test_ops;
 	tcm->com_test_data.chip_test_ops = &syna_tcm_test_ops;
@@ -3289,7 +3593,6 @@ static int syna_dev_probe(struct platform_device *pdev)
 			LOGI("Success to get panel info\n");
 			break;
 		}
-		msleep(500);
 	}
 
 	if (retry == 10) {
@@ -3309,6 +3612,25 @@ static int syna_dev_probe(struct platform_device *pdev)
 		goto err_connect;
 	}
 #endif
+
+#ifndef CONFIG_REMOVE_OPLUS_FUNCTION
+	/*step10 : FTM process*/
+	tcm->boot_mode = get_boot_mode();
+#endif
+	if (is_ftm_boot_mode(tcm)) {
+		retval = syna_tcm_sleep(tcm->tcm_dev, true);
+		if (retval < 0) {
+			LOGE("Fail to enter deep sleep\n");
+		}
+		syna_dev_release_irq(tcm);
+
+		if (tcm->health_monitor_support) {
+			tp_healthinfo_report(&tcm->monitor_data, HEALTH_PROBE, &time_counter);
+		}
+
+		LOGI("%s: not in normal mode, return.\n", __func__);
+		return 0;
+	}
 
 #ifdef HAS_SYSFS_INTERFACE
 	/* create the device file and register to char device classes */
@@ -3393,6 +3715,8 @@ static int syna_dev_probe(struct platform_device *pdev)
 			create_singlethread_workqueue("sp_resume0");
 	INIT_WORK(&tcm->speed_up_work, syna_speedup_resume);
 
+	hrtimer_init(&tcm->insert_timestamp_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	tcm->insert_timestamp_timer.function = set_insert_timestamp;
 	/* syna_tcm_enable_predict_reading */
 	syna_tcm_enable_predict_reading(tcm->tcm_dev, true);
 
@@ -3441,7 +3765,11 @@ err_allocate_cdev:
  * @return
  *    on success, 0; otherwise, negative value on error.
  */
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+static void syna_dev_remove(struct platform_device *pdev)
+#else
 static int syna_dev_remove(struct platform_device *pdev)
+#endif
 {
 	struct syna_tcm *tcm = platform_get_drvdata(pdev);
 #if IS_ENABLED(CONFIG_DRM_OPLUS_PANEL_NOTIFY)|| IS_ENABLED(CONFIG_DRM_MSM)\
@@ -3451,7 +3779,10 @@ static int syna_dev_remove(struct platform_device *pdev)
 
 	if (!tcm) {
 		LOGW("Invalid handle to remove\n");
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+#else
 		return 0;
+#endif
 	}
 
 	syna_send_signal(tcm, SIGKILL);
@@ -3465,18 +3796,9 @@ static int syna_dev_remove(struct platform_device *pdev)
 	destroy_workqueue(tcm->helper.workqueue);
 #endif
 
-#ifdef HAS_SYSFS_INTERFACE
-	/* remove the cdev and sysfs nodes */
-	syna_cdev_remove_sysfs(tcm);
-	platform_set_drvdata(pdev, NULL);
-#endif
-
 	/* check the connection status, and do disconnection */
 	if (tcm->dev_disconnect(tcm) < 0)
 		LOGE("Fail to do device disconnection\n");
-
-	if (tcm->userspace_app_info != NULL)
-		syna_pal_mem_free(tcm->userspace_app_info);
 
 	mutex_unlock(&tcm->mutex);
 	/*step7 : suspend && resume fuction register*/
@@ -3517,18 +3839,10 @@ static int syna_dev_remove(struct platform_device *pdev)
 	}
 
 #endif/*CONFIG_FB*/
-	/*mutex_destroy(&tcm->mutex);*/
-	syna_tcm_buf_release(&tcm->event_data);
-
-	syna_pal_mutex_free(&tcm->tp_event_mutex);
-
-	/* remove the allocated tcm device */
-	syna_tcm_remove_device(tcm->tcm_dev);
-
-	/* release the device context */
-	syna_pal_mem_free((void *)tcm);
-
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+#else
 	return 0;
+#endif
 }
 
 /**
@@ -3594,6 +3908,12 @@ static void syna_main_register(struct seq_file *s, void *chip_data)
 	unsigned short config = 0;
 	unsigned int temp = 0;
 	struct syna_tcm *tcm_info = (struct syna_tcm *)chip_data;
+
+	if (tcm_info->tcm_dev->is_sleep) {
+		TPD_INFO("Not in resume over state\n");
+		seq_printf(s, "Not in resume over state\n");
+		return;
+	}
 
 	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev,
 					     DC_IN_WAKEUP_GESTURE_MODE,
@@ -3679,139 +3999,6 @@ static void syna_main_register(struct seq_file *s, void *chip_data)
 	} else {
 		TPD_INFO("grip direction(1:ver 0:hor): 0x%0X\n", config);
 		seq_printf(s, "grip direction(0:ver 1:hor): 0x%0X\n", config);
-	}
-
-	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev, DC_DARK_ZONE_ENABLE,
-					     &config, 0);
-	if (retval < 0) {
-		TPD_INFO("dark zone enable : ERROR\n");
-		seq_printf(s, "dark zone enable : ERROR\n");
-
-	} else {
-		TPD_INFO("dark zone enable : 0x%0X\n", config);
-		seq_printf(s, "dark zone enable : 0x%0X\n", config);
-	}
-
-	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev, DC_GRIP_DARK_ZONE_X,
-					     &config, 0);
-
-	if (retval < 0) {
-		TPD_INFO("dark zone x : ERROR\n");
-		seq_printf(s, "dark zone x : ERROR\n");
-
-	} else {
-		TPD_INFO("dark zone x : 0x%0X\n", config);
-		seq_printf(s, "dark zone x : 0x%0X\n", config);
-	}
-
-	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev, DC_GRIP_DARK_ZONE_Y,
-					     &config, 0);
-	if (retval < 0) {
-		TPD_INFO("dark zone y : ERROR\n");
-		seq_printf(s, "dark zone y : ERROR\n");
-
-	} else {
-		TPD_INFO("dark zone y : 0x%0X\n", config);
-		seq_printf(s, "dark zone y : 0x%0X\n", config);
-	}
-
-	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev, DC_GRIP_ABS_DARK_SEL,
-					     &config, 0);
-
-	if (retval < 0) {
-		TPD_INFO("abs dark sel : ERROR\n");
-		seq_printf(s, "abs dark sel : ERROR\n");
-
-	} else {
-		TPD_INFO("abs dark sel : 0x%0X\n", config);
-		seq_printf(s, "abs dark sel : 0x%0X\n", config);
-	}
-
-	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev, DC_GRIP_ABS_DARK_X,
-					     &config, 0);
-
-	if (retval < 0) {
-		TPD_INFO("abs dark zone x : ERROR\n");
-		seq_printf(s, "abs dark zone x : ERROR\n");
-	} else {
-		TPD_INFO("abs dark zone x : %d\n", config);
-		seq_printf(s, "abs dark zone x : %d\n", config);
-	}
-
-	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev, DC_GRIP_ABS_DARK_Y,
-					     &config, 0);
-	if (retval < 0) {
-		TPD_INFO("abs dark zone y : ERROR\n");
-		seq_printf(s, "abs dark zone y : ERROR\n");
-
-	} else {
-		TPD_INFO("abs dark zone y : %d\n", config);
-		seq_printf(s, "abs dark zone y : %d\n", config);
-	}
-
-	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev, DC_GRIP_ABS_DARK_U,
-					     &config, 0);
-	if (retval < 0) {
-		TPD_INFO("abs dark zone U : ERROR\n");
-		seq_printf(s, "abs dark zone U : ERROR\n");
-	} else {
-		TPD_INFO("abs dark zone U : %d\n", config);
-		seq_printf(s, "abs dark zone U : %d\n", config);
-	}
-
-	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev, DC_GRIP_ABS_DARK_V,
-					     &config, 0);
-	if (retval < 0) {
-		TPD_INFO("abs dark zone V : ERROR\n");
-		seq_printf(s, "abs dark zone V : ERROR\n");
-	} else {
-		TPD_INFO("abs dark zone V : %d\n", config);
-		seq_printf(s, "abs dark zone V : %d\n", config);
-	}
-
-	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev, DC_GRIP_CONDTION_ZONE,
-					     &config, 0);
-	if (retval < 0) {
-		TPD_INFO("condtion zone : ERROR\n");
-		seq_printf(s, "condtion zone : ERROR\n");
-	} else {
-		TPD_INFO("condtion zone : %d\n", config);
-		seq_printf(s, "condtion zone : 0x%0X\n", config);
-	}
-
-	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev, DC_GRIP_SPECIAL_ZONE_X,
-					     &config, 0);
-
-	if (retval < 0) {
-		TPD_INFO("special zone x : ERROR\n");
-		seq_printf(s, "special zone x : ERROR\n");
-
-	} else {
-		TPD_INFO("special zone x : %d\n", config);
-		seq_printf(s, "special zone x : %d\n", config);
-	}
-
-	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev, DC_GRIP_SPECIAL_ZONE_Y,
-					     &config, 0);
-
-	if (retval < 0) {
-		TPD_INFO("special zone y : ERROR\n");
-		seq_printf(s, "special zone y : ERROR\n");
-
-	} else {
-		TPD_INFO("special zone y : %d\n", config);
-		seq_printf(s, "special zone y : %d\n", config);
-	}
-
-	retval = syna_tcm_get_dynamic_config(tcm_info->tcm_dev, DC_GRIP_SPECIAL_ZONE_L,
-					     &config, 0);
-	if (retval < 0) {
-		TPD_INFO("special zone len : ERROR\n");
-		seq_printf(s, "special zone len : ERROR\n");
-
-	} else {
-		TPD_INFO("special zone len : %d\n", config);
-		seq_printf(s, "special zone len : %d\n", config);
 	}
 
 	TPD_INFO("Buid ID:%d, Custom ID:0x%s\n",
@@ -4066,6 +4253,12 @@ static void syna_delta_read(struct seq_file *s, void *chip_data)
 	int retval;
 	struct syna_tcm *tcm_info = (struct syna_tcm *)chip_data;
 
+	if (tcm_info->tcm_dev->is_sleep) {
+		TPD_INFO("Not in resume over state\n");
+		seq_printf(s, "Not in resume over state\n");
+		return;
+	}
+
 	retval = syna_tcm_set_dynamic_config(tcm_info->tcm_dev, DC_NO_DOZE, 1, 0);
 
 	if (retval < 0) {
@@ -4099,6 +4292,12 @@ static void syna_baseline_read(struct seq_file *s, void *chip_data)
 	int retval;
 	struct syna_tcm *tcm_info = (struct syna_tcm *)chip_data;
 
+	if (tcm_info->tcm_dev->is_sleep) {
+		TPD_INFO("Not in resume over state\n");
+		seq_printf(s, "Not in resume over state\n");
+		return;
+	}
+
 	retval = syna_tcm_set_dynamic_config(tcm_info->tcm_dev, DC_NO_DOZE, 1, 0);
 
 	if (retval < 0) {
@@ -4129,6 +4328,12 @@ static void syna_reserve_read(struct seq_file *s, void *chip_data)
 {
 	int retval;
 	struct syna_tcm *tcm_info = (struct syna_tcm *)chip_data;
+
+	if (tcm_info->tcm_dev->is_sleep) {
+		TPD_INFO("Not in resume over state\n");
+		seq_printf(s, "Not in resume over state\n");
+		return;
+	}
 
 	retval = syna_tcm_set_dynamic_config(tcm_info->tcm_dev, DC_NO_DOZE, 1, 0);
 
@@ -4173,21 +4378,110 @@ static void syna_tp_data_record_write(void *chip_data, int count)
 	}
 
 	if (count) {
-		retval = syna_tcm_set_dynamic_config(tcm_info->tcm_dev, DC_SET_DIFFER_READ, 1, RESP_IN_ATTN);
-
-		if (retval < 0) {
-			TP_INFO(tcm_info->tp_index, "Failed to set differ read true\n");
+		if (tcm_info->lpwg_enabled) {
+			retval = syna_tcm_set_dynamic_config(tcm_info->tcm_dev, DC_SET_DIFFER_READ, 1, RESP_IN_ATTN);
+			if (retval < 0) {
+				TP_INFO(tcm_info->tp_index, "Failed to set differ read true\n");
+			}
 		}
 		tcm_info->differ_read_every_frame = true;
 	} else {
 		retval = syna_tcm_set_dynamic_config(tcm_info->tcm_dev, DC_SET_DIFFER_READ, 0, RESP_IN_ATTN);
-
 		if (retval < 0) {
 			TP_INFO(tcm_info->tp_index, "Failed to set differ read false\n");
 		}
 		tcm_info->differ_read_every_frame = false;
 	}
 	TP_INFO(tcm_info->tp_index, "tp data record set to %u\n", count);
+	return;
+}
+
+static void syna_tcm_format_print_snr(struct seq_file *s, struct syna_tcm *tcm_info, int index)
+{
+	unsigned int rows, cols;
+	unsigned int i = 0;
+	short *pdata_16;
+	struct syna_tcm_test *test_hcd = tcm_info->test_hcd;
+
+	struct touchpanel_snr *snr = tcm_info->snr;
+	int rx_num = tcm_info->rx_num;
+
+	rows = le2_to_uint(tcm_info->tcm_dev->app_info.num_of_image_rows);
+	cols = le2_to_uint(tcm_info->tcm_dev->app_info.num_of_image_cols);
+
+	pdata_16 = (short *)&test_hcd->report.buf[0];
+
+	if (tcm_info->tcm_dev->max_objects > MAX_NUM_OBJECTS) {
+		tcm_info->tcm_dev->max_objects = MAX_NUM_OBJECTS;
+	}
+
+	for (i = 0; i < tcm_info->tcm_dev->max_objects; i++) {
+		if (snr[i].point_status) {
+			if (index) {
+				snr[i].max = *(pdata_16 + snr[i].channel_x * rx_num + snr[i].channel_y) > snr[i].max ?
+						*(pdata_16 + snr[i].channel_x * rx_num + snr[i].channel_y) : snr[i].max;
+				snr[i].min = *(pdata_16 + snr[i].channel_x * rx_num + snr[i].channel_y) < snr[i].min ?
+						*(pdata_16 + snr[i].channel_x * rx_num + snr[i].channel_y) : snr[i].min;
+			} else {
+				snr[i].max = *(pdata_16 + snr[i].channel_x * rx_num + snr[i].channel_y);
+				snr[i].min = *(pdata_16 + snr[i].channel_x * rx_num + snr[i].channel_y);
+			}
+			snr[i].sum += *(pdata_16 + snr[i].channel_x * rx_num + snr[i].channel_y);
+		}
+	}
+	return;
+}
+
+static void syna_delta_snr_read(struct seq_file *s, void *chip_data, uint32_t count)
+{
+	int retval;
+	int i = 0;
+	struct syna_tcm *tcm_info = (struct syna_tcm *)chip_data;
+	struct touchpanel_snr *snr = tcm_info->snr;
+
+	if (!tcm_info->snr_read_support) {
+		seq_printf(s, "snr read not support! \n");
+		return;
+	}
+	if (!snr[0].doing) {
+		seq_printf(s, "snr doing zero! \n");
+		return;
+	}
+
+	for (i = 0; i < count; i++) {
+		retval = syna_tcm_set_dynamic_config(tcm_info->tcm_dev, DC_NO_DOZE, 1, 0);
+		if (retval < 0) {
+			TP_INFO(tcm_info->tp_index, "Failed to exit doze\n");
+		}
+
+		msleep(20); /* delay 20ms */
+
+		retval = syna_tcm_collect_reports(tcm_info, REPORT_DELTA, 1);
+		if (retval < 0) {
+			seq_printf(s, "Failed to read delta data\n");
+			return;
+		}
+
+		syna_tcm_format_print_snr(s, tcm_info, i);
+
+		/*set normal doze*/
+		retval = syna_tcm_set_dynamic_config(tcm_info->tcm_dev, DC_NO_DOZE, 0, 0);
+		if (retval < 0) {
+			TP_INFO(tcm_info->tp_index, "Failed to switch to normal\n");
+		}
+	}
+	for (i = 0; i < tcm_info->tcm_dev->max_objects; i++) {
+		if (snr[i].point_status) {
+			snr[i].noise = snr[i].max - snr[i].min;
+			seq_printf(s, "%d|%d|", snr[i].channel_x, snr[i].channel_y);
+			seq_printf(s, "%d|", snr[i].max);
+			seq_printf(s, "%d|", snr[i].min);
+			seq_printf(s, "%d|", snr[i].sum / count);
+			seq_printf(s, "%d\n", snr[i].noise);
+			SNR_RESET(snr[i]);
+			LOGI("snr-cover [%d %d] %d %d %d\n", snr[i].channel_x, snr[i].channel_y, snr[i].max, snr[i].min, snr[i].sum);
+		}
+	}
 	return;
 }
 
@@ -4226,6 +4520,8 @@ static int syna_spi_suspend(struct device *dev)
 	/* disable irq */
 	if (tcm->hw_if->ops_enable_irq)
 		tcm->hw_if->ops_enable_irq(tcm->hw_if, false);
+
+	tcm->suspend_task = get_current();
 
 	return 0;
 }
@@ -4343,10 +4639,6 @@ static void __exit syna_dev_module_exit(void)
 
 module_init(syna_dev_module_init);
 module_exit(syna_dev_module_exit);
-
-#if IS_ENABLED(CONFIG_DRM_OPLUS_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
-MODULE_SOFTDEP("pre: msm_drm");
-#endif
 
 MODULE_AUTHOR("Synaptics, Inc.");
 MODULE_DESCRIPTION("Synaptics TCM Touch Driver");

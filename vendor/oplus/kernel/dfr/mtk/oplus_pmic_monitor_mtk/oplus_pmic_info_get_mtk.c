@@ -17,6 +17,7 @@
 #include <linux/fs.h>
 #include <linux/seq_file.h>
 #include <linux/err.h>
+#include <linux/errno.h>
 #include <linux/file.h>
 #include <linux/types.h>
 #include <linux/unistd.h>
@@ -153,6 +154,11 @@ static int init_pmic_history_fdt(void)
 		ret = of_property_read_u32(np,"sts_spmi_seq_off",&reg->sts_spmi_seq_off);
                 if (ret && (ret != -EINVAL)) {
                         pr_err("%s don't find sts_spmi_seq_off\n", __func__);
+                        return ret;
+                }
+                ret = of_property_read_u32(np,"oplus_uvlo_flag",&reg->oplus_uvlo_flag);
+                if (ret && (ret != -EINVAL)) {
+                        pr_err("%s don't find oplus_uvlo_flag\n", __func__);
                         return ret;
                 }
 	}

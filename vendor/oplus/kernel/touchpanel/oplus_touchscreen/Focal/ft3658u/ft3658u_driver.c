@@ -3234,12 +3234,12 @@ static void ft3658u_get_rawdata_snr(struct chip_data_ft3658u *ts_data)
 	}
 }
 
-static void ft3658u_tp_limit_data_write(void *chip_data, int count)
+static void ft3658u_tp_data_record_write(void *chip_data, int count)
 {
 	struct chip_data_ft3658u *ts_data = (struct chip_data_ft3658u *)chip_data;
 	int ret = 0;
 
-	TPD_INFO("%s fts_tp_limit_data_write:%d \n", __func__, count);
+	TPD_INFO("%s ft3658u_tp_data_record_write:%d \n", __func__, count);
 
 	if (count < 0) {
 		TPD_INFO("%s:count is error %d", __func__, count);
@@ -3630,7 +3630,7 @@ static struct debug_info_proc_operations ft3658u_debug_info_proc_ops = {
 	.main_register_read = ft3658u_main_register_read,
 	.self_delta_read   = ft3658u_self_delta_read,
 	.delta_snr_read    = ft3658u_delta_snr_read,
-	.tp_limit_data_write    = ft3658u_tp_limit_data_write,
+	.tp_data_record_write    = ft3658u_tp_data_record_write,
 };
 
 struct focal_debug_func ft3658u_debug_ops = {

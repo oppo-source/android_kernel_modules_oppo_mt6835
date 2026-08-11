@@ -23,6 +23,9 @@
 
 /* register map */
 #define ak09970_REG_PERSINT				(0x00)
+#define ak09970_DEVICE_ID				(0xC1)
+#define ak09970_COMPANY_ID				(0x48)
+
 #define ak09970_VAL_PERSINT_COUNT				(0x80)
 #define ak09970_VAL_PERSINT_INTCLR			(0x01)
 /*
@@ -160,6 +163,11 @@
 #define XBOP_TOL			        2001
 #define XBRP_TOL			        2000
 
+enum ak09970_panel_mode {
+	PRIMARY_PANEL = 0,
+	SECONDARY_PANEL,
+	MAX_RETRY_PANEL = 10,
+};
 
 #define ak09970_DETECTION_MODE				ak09970_DETECTION_MODE_INTERRUPT
 #define ak09970_INTERRUPT_TYPE				ak09970_VAL_INTSRS_INTTYPE_WITHIN
@@ -199,6 +207,7 @@ struct oplus_dhall_chip {
 	wait_queue_head_t wait;
 	struct wakeup_source *ws;                           /*Qualcomm KBA-211220012446, To make power manager stay awake*/
 	bool is_turn_upside_down;
+	bool fpga_trans_support;
 };
 
 #endif  /* __AK09970_H__ */

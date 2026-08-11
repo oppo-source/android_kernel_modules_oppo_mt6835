@@ -144,6 +144,20 @@ int send_fingerprint_msg(int module, int event, void *data,
         g_fingerprint_msg.event = E_FP_EVENT_STOP_INTERRUPT;
         need_report = 1;
         break;
+    case E_TP_AIFILM:
+        g_fingerprint_msg.module = E_TP_AIFILM;
+        g_fingerprint_msg.event = event;
+        g_fingerprint_msg.out_size = size <= MAX_MESSAGE_SIZE ? size : MAX_MESSAGE_SIZE;
+        memcpy(g_fingerprint_msg.out_buf, data, g_fingerprint_msg.out_size);
+        need_report = 1;
+        break;
+    case E_FP_TP_GRIP:
+        g_fingerprint_msg.module = E_FP_TP_GRIP;
+        g_fingerprint_msg.event = event == 1 ? E_FP_EVENT_MISTOUCH_CLASP : E_FP_EVENT_MISTOUCH_UNCLASP;
+        g_fingerprint_msg.out_size = size <= MAX_MESSAGE_SIZE ? size : MAX_MESSAGE_SIZE;
+        memcpy(g_fingerprint_msg.out_buf, data, g_fingerprint_msg.out_size);
+        need_report = 1;
+        break;
     default:
         g_fingerprint_msg.module = module;
         g_fingerprint_msg.event = event;

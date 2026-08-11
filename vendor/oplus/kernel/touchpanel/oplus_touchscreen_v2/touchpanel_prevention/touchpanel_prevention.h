@@ -16,6 +16,11 @@
 #define MAX_STRING_CNT              (15)
 #define MAX_AREA_PARAMETER          (10)
 #define UP2CANCEL_PRESSURE_VALUE    (0xFF)
+#define GRIP_SINGLE_CMD_SIZE        (128)
+#define GRIP_ALL_CMD_SIZE           (8192)
+
+#define MAX_FRAME_TIME_INTERVAL 9
+#define MIN_FRAME_TIME_INTERVAL 2
 
 typedef enum edge_grip_side {
 	TYPE_UNKNOW,
@@ -470,6 +475,52 @@ struct kernel_grip_info {
 	struct reclining_mode_data reclining_data;                        /*recliling mode para*/
 	struct reclining_mode_data current_data;                          /*current para*/
 	/*add for curved_screen_v4.2 end*/
+	/* add for grip 4.3 start */
+	bool     is_curved_screen_v4_3;                                   /*wether is_curved_screen_V4_3*/
+	uint16_t corner_major_minor_check_support;                        /*major minor check function support */
+	uint16_t corner_major_minor_percent_thd;                          /*major check with minor*corner_major_minor_percent_thd*/
+	uint16_t corner_major_max_thd;                                    /*major large check */
+	uint16_t corner_angle_max_range_thd;                              /*not used */
+	uint16_t point_edge_degree_check_support;                         /*point edge degree check  support*/
+	uint16_t corner_point_edge_percent_thd;                           /*corner point edge percent,edge small*/
+	uint16_t corner_point_edge_min_channel_thd;                       /*set to 1*/
+	uint16_t top_trx_corner_point_edge_percent_thd;                   /*top trx corner point edge percent,edge small */
+	uint16_t bottom_trx_corner_point_edge_percent_thd;                /*bottom trx corner point edge percent,edge small */
+	uint16_t corner_point_trx_radio_thd;                              /*point corner trx press*er min limit thd*/
+	uint16_t corner_point_check_frame_thd;                            /*point corner frame not used*/
+	uint16_t corner_point_peakdelta_stable_thd;                       /*point corner peakdelta stable check thd*/
+	uint16_t point_stability_judgment_check_support;                  /*point stable check support*/
+	uint16_t point_stability_press_jitter_thd;                        /*point press stable check thd*/
+	uint16_t point_stability_er_jitter_thd;                           /*point er stable check thd*/
+	uint16_t point_stability_er_jitter_percent_thd;                   /*point er stable percent check thd*/
+	int16_t  point_stability_tx_press_jitter_status[TOUCH_MAX_NUM];   /*point tx press stable check status*/
+	int16_t  point_stability_tx_er_jitter_status[TOUCH_MAX_NUM];      /*point tx er stable check status*/
+	int16_t  point_stability_rx_press_jitter_status[TOUCH_MAX_NUM];   /*point rx press stable check status*/
+	int16_t  point_stability_rx_er_jitter_status[TOUCH_MAX_NUM];      /*point rx er stable check status*/
+	uint16_t point_corner_er_min_limit_support;                       /*point corner er min limit check support*/
+	uint16_t point_corner_tx_er_min_limit_thd;                        /*point corner tx er min limit thd*/
+	uint16_t point_corner_rx_er_min_limit_thd;                        /*point corner rx er min limit thd*/
+	uint16_t one_frame_down_check_support;                            /*only one frame down check support*/
+	uint16_t uniform_make_up_point_v2_support;
+	uint16_t uniform_make_up_point_num;
+	uint16_t uniform_make_up_exit_point_num;
+	uint16_t uniform_max_make_up_time;
+	uint16_t uniform_make_up_point_up_time_interval;
+	uint16_t uniform_make_up_last_point_percent_limit;
+	uint16_t uniform_make_up_last_input_point_x[TOUCH_MAX_NUM];
+	uint16_t uniform_make_up_last_input_point_y[TOUCH_MAX_NUM];
+	int32_t  uniform_make_up_x_shift_initial[TOUCH_MAX_NUM];
+	int32_t  uniform_make_up_y_shift_initial[TOUCH_MAX_NUM];
+	int32_t  uniform_make_up_x_shift_leftover[TOUCH_MAX_NUM];
+	int32_t  uniform_make_up_y_shift_leftover[TOUCH_MAX_NUM];
+	uint16_t uniform_last_make_up_prevent_out_x[TOUCH_MAX_NUM];
+	uint16_t uniform_last_make_up_prevent_out_y[TOUCH_MAX_NUM];
+	uint16_t uniform_make_up_point_num_status[TOUCH_MAX_NUM];
+	int32_t  uniform_make_up_point_x_move_speed[TOUCH_MAX_NUM];
+	int32_t  uniform_make_up_point_y_move_speed[TOUCH_MAX_NUM];
+	s64  uniform_make_up_point_last_down_time[TOUCH_MAX_NUM];
+	uint16_t uniform_make_up_point_upid_status;
+	/* add for grip 4.3 end */
 };
 
 struct fw_grip_operations {

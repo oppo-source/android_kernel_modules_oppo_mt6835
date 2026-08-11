@@ -121,6 +121,7 @@ enum GESTURE_ID {
 };
 
 #ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
 const struct mtk_chip_config st_spi_ctrdata = {
 	.sample_sel = 0,
 	.cs_setuptime = 5000,
@@ -128,6 +129,7 @@ const struct mtk_chip_config st_spi_ctrdata = {
 	.cs_idletime = 0,
 	.tick_delay = 0,
 };
+#endif
 #endif
 
 /*******Part1:Call Back Function implement*******/
@@ -2499,7 +2501,7 @@ static fw_check_state fts_fw_check(void *chip_data,
 
 	if (panel_data->manufacture_info.version) {
 		sprintf(dev_version, "%04x", panel_data->tp_fw);
-		strlcpy(&(panel_data->manufacture_info.version[7]), dev_version, 5);
+		strncpy(&(panel_data->manufacture_info.version[7]), dev_version, 5);
 
 	} else {
 		TPD_INFO("manufacture_info.version not exist");
@@ -2707,12 +2709,6 @@ static u32 fts_u32_trigger_reason(void *chip_data, int gesture_enable,
 	}*/
 	/*ret = ft3681_fts_read_reg(FTS_REG_POINTS, &val);*/
 	val = touch_buf[0];
-
-	/*clear water_mode_flag*/
-	if (((val | 0xFE) == 0xFE) && (ts_data->water_mode_flag == 1)) {
-		ts_data->water_mode_flag = 0;
-		TPD_INFO("water_mode_flag = %d\n", ts_data->water_mode_flag);
-	}
 
 	if (val && val != 0xFB && val != 0xFF) {
 		SET_BIT(result_event, IRQ_FW_HEALTH);
@@ -3009,12 +3005,6 @@ static void fts_health_report(void *chip_data, struct monitor_data *mon_data)
 
 	/*ret = ft3681_fts_read_reg(0x01, &val);*/
 	val = ts_data->touch_buf[0];
-	if (val & 0x01) {
-		ts_data->water_mode_flag = 1;
-	}
-	else {
-		ts_data->water_mode_flag = 0;
-	}
 	TPD_INFO("Health register(0x01):0x%x", val);
 	if (((val & 0x01) && !ts_data->is_in_water)
 	    || CHK_BIT_NUM(ts_data->monitor_data->health_simulate_trigger, HEALTH_SIMULATE_BIT_IC_HEALTHINFO)) {
@@ -3351,6 +3341,16 @@ static void fts_fod_fingerprint_health_info(void *chip_data)
 	ret = ft3681_fts_read(&cmd, 1, buf, 11);
 	TPD_INFO("%s:%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x \n",
 		__func__, buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9], buf[10]);
+
+	if (ts_data->monitor_data == NULL) {
+		TPD_INFO("%s : ts_data->monitor_data is NULL\n", __func__);
+		return;
+	}
+
+	if (ts_data->monitor_data->p_finger_health_info == NULL) {
+		TPD_INFO("%s : ts_data->monitor_data->p_finger_health_info is NULL\n", __func__);
+		return;
+	}
 
 	switch (buf[6]) {
 	case FOD_ENABLE:
@@ -4138,18 +4138,6 @@ int fts_set_spi_max_speed(u32 speed, u8 mode)
 	return rc;
 }
 
-static void fts_get_water_flag(void *chip_data)
-{
-	struct chip_data_ft3681 *ts_data = (struct chip_data_ft3681 *)chip_data;
-	struct touchpanel_data *ts = spi_get_drvdata(ts_data->ft_spi);
-	TPD_INFO("%s: water flag %d!\n", __func__, ts_data->water_mode_flag);
-	if (ts_data->water_mode_flag == 1) {
-		ts->water_mode = 1;
-	} else {
-		ts->water_mode = 0;
-	}
-}
-
 static struct oplus_touchpanel_operations fts_ops = {
 	.power_control              = fts_power_control,
 	.get_vendor                 = fts_get_vendor,
@@ -4182,7 +4170,7 @@ static struct oplus_touchpanel_operations fts_ops = {
 	.force_water_mode           = fts_force_water_mode,
 	.rate_white_list_ctrl       = fts_rate_white_list_ctrl,
 	.fingerprint_health_info    = fts_fod_fingerprint_health_info,
-	.get_water_mode             = fts_get_water_flag,
+	.get_water_mode             = NULL
 };
 
 static struct focal_auto_test_operations ft3681_test_ops = {
@@ -4263,7 +4251,21 @@ static int fts_tp_probe(struct spi_device *spi)
 
 	spi->mode = SPI_MODE_0;
 	spi->bits_per_word = 8;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	spi->chip_select = 0; /*modify reg=0 for more tp vendor share same spi interface*/
+#endif
+
+#ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	spi->cs_setup.value = 1;
+	spi->cs_setup.unit = 0;
+	spi->cs_hold.value = 1;
+	spi->cs_hold.unit = 0;
+	spi->cs_inactive.value = 1;
+	spi->cs_inactive.unit = 0;
+#endif
+#endif
+
 	ret = spi_setup(spi);
 
 	if (ret) {
@@ -4307,7 +4309,9 @@ static int fts_tp_probe(struct spi_device *spi)
 
 	/*step3:binding client && dev for easy operate*/
 #ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
 	spi->controller_data = (void *)&st_spi_ctrdata;
+#endif
 #endif
 	ts_data->dev = ts->dev;
 	ts_data->ft_spi = spi;

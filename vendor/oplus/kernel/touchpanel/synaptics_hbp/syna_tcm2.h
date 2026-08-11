@@ -47,11 +47,12 @@
 #ifdef BUILD_BY_BAZEL
 #include "tp_devices.h"
 #include "touchpanel_common.h"
+#include <soc/oplus/touchpanel_event_notify.h>/* kernel 6.1 */
 #else
 #include "../oplus_touchscreen_v2/tp_devices.h"
 #include "../oplus_touchscreen_v2/touchpanel_common.h"
+#include "../touchpanel_notify/touchpanel_event_notify.h"
 #endif
-
 
 #define PLATFORM_DRIVER_NAME "synaptics_tcm_hbp"
 
@@ -64,6 +65,11 @@
 #define SIG_DISPLAY_ON  44
 #define SIG_DISPLAY_OFF 45
 #define SIG_FINGER_DOWN 46
+#define SIG_UNDER_WATER 47
+#define SIG_FINGER_UP   48
+
+#define PAGESIZE 512
+#define MAX_FINGER_NUM 10
 
 /*#define TP_NAME_SIZE_MAX 25*/
 /*
@@ -91,11 +97,20 @@
 #define IRQ_COST_TIME_OVER_20MS 20000
 #define IRQ_COST_TIME_OVER_50MS 50000
 
+#define FP_EVENT_COST_TIME_OVER_10MS 10000
+#define FP_EVENT_COST_TIME_OVER_18MS 18000
+#define FP_EVENT_COST_TIME_OVER_26MS 26000
+
+
 #define FW_UPDATE_COMPLETE_TIMEOUT  msecs_to_jiffies(40*1000)
 
 #define GESTURE_MODE_SWITCH_RETRY_TIMES     5
 #define MAX_HEALTH_REPORT_LEN 50
+#define TP_PAGE_SIZE 256
 
+#define KEY_UNDER_WATER  0x2f8
+#define KEY_ON_WATER     0x2f9
+#define UNDER_WATER_BIT  2
 /**
  * @section: Driver Configurations
  *
@@ -301,6 +316,7 @@ typedef enum debug_level {
 enum fingerprint_err_type {
 	FOD_ENABLE_NO_ERROR = 0,
 	/* reserved 1-6 */
+	FINGERPRINT_OUT_MOVE_IN = 6,
 	FINGERPRINT_AREA_NOT_MATCH = 7,
 	ANOTHER_FINGER_ON_NON_FP_ZONE = 8,
 	FINGERPRINT_DOWN_BEFORE_FP_ENABLE = 9,
@@ -373,6 +389,11 @@ enum daemon_states {
 
 	/* terminate and exit the application */
 	STATE_TERMINATE,
+};
+
+enum FingerprintEnableBit {
+    FINGERPIRNT_SCREEN_OFF_ENABLE_BIT = 0,
+    FINGERPIRNT_SCREEN_ON_ENABLE_BIT,
 };
 
 #if defined(ENABLE_HELPER)
@@ -586,6 +607,7 @@ struct syna_tcm_test {
 	struct tcm_buffer test_resp;
 	struct tcm_buffer test_out;
 };
+
 /**
  * @brief: context of the synaptics linux-based driver
  *
@@ -628,6 +650,11 @@ struct syna_tcm {
 	bool irq_wake;
 	int irq_cost_time;
 
+	/* fp variables */
+	int fp_down_time;
+	int fp_up_time;
+	int fp_down_cnt;
+	int fp_up_cnt;
 	/* cdev and sysfs nodes creation */
 	struct cdev char_dev;
 	dev_t char_dev_num;
@@ -687,13 +714,14 @@ struct syna_tcm {
 	bool rst_on_resume_enabled;
 	bool hbp_enabled; /* report data to report_to_queue[] */
 	int daemon_state;
+	int boot_mode;                                      /*boot up mode */
 	int primary_timestamp_enabled;
 	int driver_current_state;
 	bool differ_read_every_frame;
 	bool tp_data_record_support;
 	bool data_record;
 	bool enter_force_doze;
-	int boot_mode;                                      /*boot up mode */
+	bool under_water;
 
 	unsigned int waiting_frame;
 	unsigned int wait_for_ioctl_operation;
@@ -703,12 +731,15 @@ struct syna_tcm {
 	bool freq_hop_simulate_support;                     /*frequency hopping simulate feature*/
 	int frame_over_cnt_report_en;
 
+	int irq_need_dev_resume_time;                       /*control setting of wait resume time*/
 	unsigned short gesture_type;
 	unsigned short touch_and_hold;
+	unsigned short under_water_detect;
 	bool is_fp_down;
 	struct fp_underscreen_info fp_info;	/*tp info used for underscreen fingerprint*/
 	bool fp_active;	/*prepare for screen off fingerprint earlier*/
 	bool fp_prevent;	/*sensor near and fp closed, exit active state and enter sleep*/
+	struct touch_film_info film_info;
 
 	/* framebuffer callbacks notifier */
 #if IS_ENABLED(CONFIG_DRM_OPLUS_PANEL_NOTIFY)
@@ -739,10 +770,14 @@ struct syna_tcm {
 
 	bool health_monitor_support;                        /*health_monitor is used*/
 	struct monitor_data    monitor_data;                /*health monitor data*/
+	struct touchpanel_snr   snr[MAX_FINGER_NUM];        /*snr data*/
 
+	bool stats_upload_support;
 	bool exception_upload_support;
 	struct exception_data    exception_data;            /*exception_data monitor data*/
 
+	bool fingerprint_not_report_in_suspend;
+	bool syna_screenon_fingerprint_mode;
 	/* fifo to pass the data to userspace */
 	unsigned int fifo_remaining_frame;
 	struct list_head frame_fifo_queue;
@@ -760,6 +795,9 @@ struct syna_tcm {
 	bool bus_ready;                                     /*spi or i2c resume status*/
 	wait_queue_head_t wait;
 
+	struct hrtimer insert_timestamp_timer;
+	struct task_struct *suspend_task;
+	int supspend_task_error_cnt;
 	/* the pointer of userspace application info data */
 	void *userspace_app_info;
 
@@ -938,6 +976,8 @@ static inline int syna_tcm_alloc_mem(struct tcm_buffer *buffer,
 	return 0;
 }
 
+void touch_call_notifier_fp(struct syna_tcm *tcm, struct fp_underscreen_info *fp_info);
+void film_call_notifier_fp(struct syna_tcm *tcm, struct touch_film_info *film_info);
 
 #endif /* end of _SYNAPTICS_TCM2_DRIVER_H_ */
 

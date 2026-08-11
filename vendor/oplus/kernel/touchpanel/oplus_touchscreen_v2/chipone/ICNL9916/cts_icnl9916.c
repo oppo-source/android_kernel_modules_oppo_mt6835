@@ -1035,7 +1035,6 @@ static int cts_tcs_get_data(struct cts_device *cts_dev, u8 *buf, size_t size,
 {
     u8 old_int_data_method;
     u16 old_int_data_types;
-    int ret;
 
     old_int_data_types = cts_dev->fwdata.int_data_types;
     old_int_data_method = cts_dev->fwdata.int_data_method;
@@ -1043,13 +1042,11 @@ static int cts_tcs_get_data(struct cts_device *cts_dev, u8 *buf, size_t size,
     cts_set_int_data_types(cts_dev, type);
     cts_set_int_data_method(cts_dev, INT_DATA_METHOD_POLLING);
 
-    ret = cts_tcs_polling_data(cts_dev, buf, size);
-    if (ret) {
-        TPD_INFO("<E> Polling data failed: %d\n", ret);
-    }
+    cts_tcs_polling_data(cts_dev, buf, size);
 
     cts_set_int_data_method(cts_dev, old_int_data_method);
     cts_set_int_data_types(cts_dev, old_int_data_types);
+
     return 0;
 }
 
@@ -1425,7 +1422,7 @@ static int cts_output_data(struct cts_device *cts_dev, struct auto_testdata *cts
 				cap_data[r*cts_dev->hwdata->num_col + c] : rawdata[r*cts_dev->hwdata->num_col + c]);
 			tp_test_write(cts_testdata->fp, cts_testdata->length, data_buf,
 				strlen(data_buf), cts_testdata->pos);
-		}		
+		}
 		snprintf(data_buf, 64, "\n");
 		tp_test_write(cts_testdata->fp, cts_testdata->length, data_buf,
 				  strlen(data_buf), cts_testdata->pos);
@@ -1469,7 +1466,7 @@ static int cts_prepare_test(struct cts_device *cts_dev)
 			workmode, CTS_FIRMWARE_WORK_MODE_CFG, i);
     } while (i++ < 10);
 	if (workmode != CTS_FIRMWARE_WORK_MODE_CFG)
-		return -EINVAL;	
+		return -EINVAL;
 
 	ret = cts_tcs_set_product_en(cts_dev, 1);
     if (ret) {
@@ -1522,7 +1519,7 @@ static int cts_tcs_test_int_pin(struct chipone_ts_data *chip_data,
     int ret;
 
 	TPD_INFO("<I> %s +\n", __func__);
-	
+
     cts_lock_device(cts_dev);
     ret = cts_tcs_set_int_test(cts_dev, 1);
     if (ret) {
@@ -1580,10 +1577,10 @@ static int cts_tcs_test_reset_pin(struct chipone_ts_data *chip_data,
 		struct auto_testdata *cts_testdata)
 {
 	struct cts_device *cts_dev = &chip_data->cts_dev;
-	
+
 	bool ret = false;
 	int result = 0;
-	
+
 	TPD_INFO("<I> %s +\n", __func__);
 
 	cts_lock_device(cts_dev);
@@ -1625,7 +1622,7 @@ static int cts_tcs_test_reset_pin(struct chipone_ts_data *chip_data,
 	}
 
 	TPD_INFO("<I> %s -\n", __func__);
-	
+
 	return result;
 }
 
@@ -1651,7 +1648,7 @@ static int cts_tcs_test_compensate_cap(struct chipone_ts_data *chip_data,
 	TPD_INFO("<I> %s +\n", __func__);
 
 	item_limit_type = chip_data->p_cts_test_para->limit_type_comp_cap;
-	
+
 	num_nodes = cts_dev->hwdata->num_row * cts_dev->hwdata->num_row;
 
 	cap = (u8 *)kzalloc(num_nodes, GFP_KERNEL);
@@ -1669,7 +1666,6 @@ static int cts_tcs_test_compensate_cap(struct chipone_ts_data *chip_data,
 		if ((chip_data->p_cts_autotest_offset->cts_comp_cap_max == NULL)
 			|| (chip_data->p_cts_autotest_offset->cts_comp_cap_min == NULL)) {
 			TPD_INFO("<E> max or min NULL\n");
-			kfree(cap);
 			return -EINVAL;
 		}
 		memset(data_buf, 0, sizeof(data_buf));
@@ -1825,7 +1821,7 @@ static int cts_tcs_test_short(struct chipone_ts_data *chip_data,
 	TPD_INFO("<I> %s +\n", __func__);
 
 	item_limit_type = chip_data->p_cts_test_para->limit_type_short;
-	
+
 	num_nodes = cts_dev->hwdata->num_row * cts_dev->hwdata->num_row;
 	tsdata_frame_size = 2 * num_nodes;
 
@@ -1844,7 +1840,6 @@ static int cts_tcs_test_short(struct chipone_ts_data *chip_data,
 		if ((chip_data->p_cts_autotest_offset->cts_short_max == NULL)
 			|| (chip_data->p_cts_autotest_offset->cts_short_min == NULL)) {
 			TPD_INFO("<E> max or min NULL\n");
-			kfree(test_result);
 			return -EINVAL;
 		}
 		memset(data_buf, 0, sizeof(data_buf));
@@ -1904,7 +1899,7 @@ static int cts_tcs_test_short(struct chipone_ts_data *chip_data,
 		TPD_INFO("<E> Set firmware work mode to WORK_MODE_TEST failed %d\n", ret);
 		goto err_recovery_display_state;
 	}
-	
+
 	cts_set_int_data_types(cts_dev, INT_DATA_TYPE_RAWDATA);
 	cts_set_int_data_method(cts_dev, INT_DATA_METHOD_POLLING);
 
@@ -2091,7 +2086,7 @@ static int cts_tcs_test_short(struct chipone_ts_data *chip_data,
 		if (failed_cnt)
 			goto err_recovery_display_state;
 	}
-	
+
 	TPD_INFO("<I> Test short between rows");
 	ret = cts_tcs_set_short_test_type(cts_dev, CTS_SHORT_TEST_BETWEEN_ROWS);
 	if (ret) {
@@ -2190,7 +2185,7 @@ err_recovery_display_state:
             TPD_INFO("<E> Set display state to ACTIVE failed %d\n", r);
         }
     }
-	
+
 	cts_set_int_data_method(cts_dev, INT_DATA_METHOD_NONE);
 	cts_set_int_data_types(cts_dev, INT_DATA_TYPE_NONE);
 
@@ -2242,7 +2237,7 @@ static int cts_tcs_test_open(struct chipone_ts_data *chip_data,
 	TPD_INFO("<I> %s +\n", __func__);
 
 	item_limit_type = chip_data->p_cts_test_para->limit_type_open;
-	
+
 	num_nodes = cts_dev->hwdata->num_row * cts_dev->hwdata->num_row;
 	tsdata_frame_size = 2 * num_nodes;
 
@@ -2261,7 +2256,6 @@ static int cts_tcs_test_open(struct chipone_ts_data *chip_data,
 		if ((chip_data->p_cts_autotest_offset->cts_open_max == NULL)
 			|| (chip_data->p_cts_autotest_offset->cts_open_min == NULL)) {
 			TPD_INFO("<E> max or min NULL\n");
-			kfree(test_result);
 			return -EINVAL;
 		}
 		memset(data_buf, 0, sizeof(data_buf));
@@ -2314,7 +2308,7 @@ static int cts_tcs_test_open(struct chipone_ts_data *chip_data,
 		TPD_INFO("<E> Set firmware work mode to WORK_MODE_TEST failed %d\n", ret);
 		goto err_recovery_display_state;
 	}
-	
+
 	cts_set_int_data_types(cts_dev, INT_DATA_TYPE_RAWDATA);
 	cts_set_int_data_method(cts_dev, INT_DATA_METHOD_POLLING);
 
@@ -2406,7 +2400,7 @@ err_recovery_display_state:
             TPD_INFO("<E> Set display state to ACTIVE failed %d", r);
         }
     }
-	
+
 	cts_set_int_data_method(cts_dev, INT_DATA_METHOD_NONE);
 	cts_set_int_data_types(cts_dev, INT_DATA_TYPE_NONE);
 
@@ -2460,7 +2454,7 @@ static int cts_tcs_test_rawdata(struct chipone_ts_data *chip_data,
             chip_data->p_cts_test_para->test_rawdata_frames);
         return -EINVAL;
     }
-	
+
 	num_nodes = cts_dev->hwdata->num_row * cts_dev->hwdata->num_row;
 	tsdata_frame_size = 2 * num_nodes;
 
@@ -2479,7 +2473,6 @@ static int cts_tcs_test_rawdata(struct chipone_ts_data *chip_data,
 		if ((chip_data->p_cts_autotest_offset->cts_rawdata_max == NULL)
 			|| (chip_data->p_cts_autotest_offset->cts_rawdata_min == NULL)) {
 			TPD_INFO("<E> max or min NULL\n");
-			kfree(rawdata);
 			return -EINVAL;
 		}
 		memset(data_buf, 0, sizeof(data_buf));
@@ -2659,7 +2652,7 @@ static int cts_tcs_test_noise(struct chipone_ts_data *chip_data,
             chip_data->p_cts_test_para->test_noise_frames);
         return -EINVAL;
     }
-	
+
 	num_nodes = cts_dev->hwdata->num_row * cts_dev->hwdata->num_row;
 	tsdata_frame_size = 2 * num_nodes;
 
@@ -2684,7 +2677,6 @@ static int cts_tcs_test_noise(struct chipone_ts_data *chip_data,
 		if ((chip_data->p_cts_autotest_offset->cts_noise_max == NULL)
 			|| (chip_data->p_cts_autotest_offset->cts_noise_min == NULL)) {
 			TPD_INFO("<E> max or min NULL\n");
-			kfree(buffer);
 			return -EINVAL;
 		}
 		memset(data_buf, 0, sizeof(data_buf));
@@ -2960,7 +2952,6 @@ static int cts_tcs_test_gesture_rawdata(struct chipone_ts_data *chip_data,
 			|| (chip_data->p_cts_autotest_offset->cts_gstr_lp_rawdata_max == NULL)
 			|| (chip_data->p_cts_autotest_offset->cts_gstr_lp_rawdata_min == NULL)) {
 			TPD_INFO("<E> max or min NULL\n");
-			kfree(gstr_rawdata);
 			return -EINVAL;
 		}
 		memset(data_buf, 0, sizeof(data_buf));
@@ -3008,7 +2999,7 @@ static int cts_tcs_test_gesture_rawdata(struct chipone_ts_data *chip_data,
             ret = cts_tcs_polling_data(cts_dev, (u8 *)gstr_rawdata,
                 RAWDATA_BUFFER_SIZE(cts_dev));
             if (ret) {
-                TPD_INFO("<E> Get gesture rawdata failed %d\n", ret);
+                TPD_INFO("<E> Get gesture rawdata failed %d\n", r);
                 mdelay(30);
 				data_valid = false;
             } else {
@@ -3194,7 +3185,6 @@ static int cts_tcs_test_gesture_noise(struct chipone_ts_data *chip_data,
 			|| (chip_data->p_cts_autotest_offset->cts_gstr_lp_noise_max == NULL)
 			|| (chip_data->p_cts_autotest_offset->cts_gstr_lp_noise_min == NULL)) {
 			TPD_INFO("<E> max or min NULL\n");
-			kfree(buffer);
 			return -EINVAL;
 		}
 		memset(data_buf, 0, sizeof(data_buf));
@@ -3261,7 +3251,7 @@ static int cts_tcs_test_gesture_noise(struct chipone_ts_data *chip_data,
 		snprintf(data_buf, 64, "[No: %d]\n", frame+1);
 		tp_test_write(cts_testdata->fp, cts_testdata->length, data_buf, strlen(data_buf), cts_testdata->pos);
 		cts_output_data(cts_dev, cts_testdata, curr_rawdata, idle_mode ? "gstr rawdata" : "gstr lp rawdata");
-		
+
 		if (unlikely(first_frame)) {
 			memcpy(max_rawdata, curr_rawdata, tsdata_frame_size);
 			memcpy(min_rawdata, curr_rawdata, tsdata_frame_size);

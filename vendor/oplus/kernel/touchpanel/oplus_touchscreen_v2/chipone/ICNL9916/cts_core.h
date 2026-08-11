@@ -369,7 +369,7 @@ struct cts_device_rtdata {
     u8 *int_data;
     u8 *tbuf;
     u8 *rbuf;
-    
+
     struct cts_device_touch_info touch_info;
     struct cts_device_gesture_info gesture_info;
 };

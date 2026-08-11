@@ -67,6 +67,8 @@
 #define SC6607_REG_BMC_WIDTH_2		0xE9
 #define SC6607_REG_BMC_WIDTH_3		0xEA
 #define SC6607_REG_BMC_WIDTH_4		0xEB
+#define SC6607_REG_ADC_SAMPLING_MODE_CFG_REG			0xAE
+#define SC6607_LED_ADC_SAMPLING_MODE_CONFIG_MASK		BIT(2)
 
 #define SC6607_I2C_ERR_NUM		10
 #define SC6607_IRQ_EVNET_NUM		5
@@ -971,6 +973,7 @@ struct sc6607 {
 	int bc12_try_count;
 	bool soft_bc12;
 	bool bc12_done;
+	atomic_t hvdcp_start;
 	int  bc12_timeouts;
 	struct timer_list bc12_timeout;
 	unsigned int oplus_chg_type;
@@ -1039,9 +1042,17 @@ struct sc6607 {
 	struct votable *wired_icl_votable;
 	struct votable *wired_fcc_votable;
 	struct work_struct rerun_votable_work;
+	int cp_ichg;
+	int cp_vbus;
+	int cp_vac;
+	int cp_vbat;
+	int cp_tsbus;
+	int cp_tsbat;
+	bool ufcs_enable;
 };
 
-int sc6607a_set_dpdm_ctrl(struct sc6607 *chip, bool enable);
+void sc6607_ufcs_get_value(struct sc6607 *chip);
+int sc6607_set_ufcs_enable(struct sc6607 *chip, bool enable);
 #ifdef CONFIG_OPLUS_CHARGER_MTK
 void Charger_Detect_Init(void);
 void Charger_Detect_Release(void);

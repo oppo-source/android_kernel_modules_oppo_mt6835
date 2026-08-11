@@ -41,10 +41,10 @@ bool post_message(struct message_list *list, int len, int type, u8 *msg)
 	MESSAGE_DBG("post_message:lock list 0x%p,node addr 0x%llx node 0x%llx", list, (u64)&node, (u64)node);
 	spin_lock_irqsave(&list->lock, flags);
 	if (list->size >= list->max_size) {
+		MESSAGE_DBG("post_message: unlock list 0x%p,node 0x%llx", list, (u64)node);
 		kfree(node);
 		MESSAGE_ERR("%s list is full.", list->name);
 		spin_unlock_irqrestore(&list->lock, flags);
-		MESSAGE_DBG("post_message: unlock list 0x%p,node 0x%llx", list, (u64)node);
 		return false;
 	}
 

@@ -68,6 +68,12 @@
 #define GOODIX_M_GESTRUE                 0x6D
 #define GOODIX_W_GESTURE                 0x77
 
+/* gesture type for fingerprint start */
+#define GOODIX_COMPLEX_SMALL_AREA        0x41
+#define GOODIX_SIMPLE_AREA               0x42
+#define GOODIX_RELEASE_HOLD              0x44
+/* gesture type for fingerprint end */
+
 #define GTP_SENSOR_ID_DEFAULT            255
 #define GTP_SENSOR_ID_ERR                0
 
@@ -82,7 +88,7 @@
 #define GTP_DATA0_GESTURE_VEE            0
 /* some gesture bit control of data1 */
 #define GTP_DATA1_RESERVED_BIT7          7 /* bit7 */
-#define GTP_DATA1_RESERVED_BIT6          6
+#define GTP_DATA1_FP_GESTURE_HOLD_BIT6   6
 #define GTP_DATA1_GESTURE_FINGERPRINT    5
 #define GTP_DATA1_GESTURE_SINGLE         4
 #define GTP_DATA1_RESERVED_LEFT_SLIDE    3
@@ -183,8 +189,15 @@
 #define GTP_CMD_UNIFY_CMD               0x90
 #define GTP_CMD___NORMAL                0x00
 #define GTP_CMD__RAWDATA                0x01
-#define GTP_CMD_DIFFDATA                0x02
+#define GTP_CMD_DIFFDATA                0x82
 #define GTP_CMD_BASEDATA                0x03
+
+#define GTP_FREQ_REG                    0x9c
+#define GTP_FREQ_CMD_0                  0x00
+#define GTP_FREQ_CMD_1                  0x01
+#define GTP_FREQ_CMD_2                  0x02
+#define GTP_FREQ_CMD_3                  0x03
+#define GTP_FREQ_CMD_4                  0x04
 
 #define GTP_CLEAR_STATE_CMD             0
 #define GTP_CLEAR_STATE_DATA            1
@@ -229,6 +242,10 @@
 
 #define GOODIX_CMD_REG                  0x10174
 
+#define GOODIX_RST_TEST_REG             0x10194
+
+#define GTP_SCENE_TYPE_MASK             7
+#define GTP_HIGH_LOCK_GAME              0x02
 #define GTP_MASK_ENABLE                 0x01
 #define GTP_MASK_DISABLE                0x00
 /****************************Start of auto test ********************/
@@ -295,6 +312,8 @@ enum PENCIL_OSC_FREQ {
 #define PENCIL_DATA_MAX       10
 #define PENCIL_LIMIT_MIN      1500
 #define PENCIL_LIMIT_MAX      6999
+#define GET_NEW_TRX           15
+#define GET_NEW_CLK           25
 
 /* SOME STATE */
 
@@ -320,7 +339,7 @@ static char *test_item_name[MAX_TEST_ITEMS] = {
 	"SELF_RAWDATA_TEST",
 	"SHORT_TEST",
 	"",
-	"",
+	"RST_TEST",
 	"",
 	""
 };
@@ -360,7 +379,7 @@ static char *test_item_name[MAX_TEST_ITEMS] = {
 #define GOODIX_MAX_RATE_NUM         2
 #define GOODIX_MAX_TEMP             2
 
-#define GOODIX_CHECK_HRTIMER_NS        150000000
+#define GOODIX_CHECK_HRTIMER_NS        300000000
 #define GOODIX_CHECK_HRTIMER_S         0
 #define GOODIX_PALM_IN_PEN_HRTIMER_S   5
 /* pen control cmd */
@@ -547,6 +566,9 @@ struct goodix_ic_info {
 	struct goodix_ic_info_misc misc;
 };
 #pragma pack()
+
+#define TEMPERATURE_CNT 3
+#define TEMPERATURE_SPECIAL 0
 
 #define MAX_CMD_DATA_LEN 10
 #define MAX_CMD_BUF_LEN  16
@@ -787,6 +809,7 @@ struct chip_data_brl {
 	bool                                pen_enable;
 	bool                                pen_support;
 	bool                                pen_support_opp;
+	bool                                no_need_osctest;
 	int                                 pen_input_state;
 	u8                                  pen_num;
 	u8                                  point_type;
@@ -809,8 +832,10 @@ struct chip_data_brl {
 	bool                                motor_coord_support;
 	bool                                motor_max_limit;
 	bool                                snr_read_support;
+	bool                                fpga_spi_agg_support;
 
 	unsigned int                        pen_osc_frequency;
+	unsigned int                        hardware_trx_direction;
 	unsigned int                        support_gesture_type;
 	unsigned int                        display_refresh_rate;
 	int                                 rate_num;
@@ -820,6 +845,12 @@ struct chip_data_brl {
 	unsigned int                        gt_temperature[GOODIX_MAX_TEMP];
 	unsigned int                        temp_recorder_cnt;
 	bool                                gt_temp_enable;
+
+	int                                 get_new_trx[2];
+	char                                get_new_trx_name[GET_NEW_TRX];
+
+	int                                 get_new_clk[2];
+	char                                get_new_clk_name[GET_NEW_CLK];
 
 	int                                 tp_index;
 	u32                                 gesture_type;
@@ -866,8 +897,9 @@ struct chip_data_brl {
 	bool                               gesture_enable;
 	bool                               sleep_enable;
 	bool                               default_rate_set;
-	struct work_struct                 check_pendown_work;
 	struct mutex                       debug_lock;
+	unsigned int                       panel_type;
+	struct work_struct                 check_pendown_work;
 	struct touchpanel_data *ts;
 
 	/*differ mode*/
@@ -875,6 +907,9 @@ struct chip_data_brl {
 	u8 *diff_rw_buf;
 	s16 *diff_buf;
 	u32 diff_size;
+	unsigned int                       high_volume_invalid_touch_cnt;
+	s16                                *rawdata;
+	bool                               diff_sync_check;
 };
 
 /****************************End of struct declare***************************/

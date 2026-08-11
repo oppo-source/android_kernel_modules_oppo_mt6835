@@ -14,6 +14,7 @@
 /*********PART2:Define Area**********************/
 
 #define RESET_TO_NORMAL_TIME                    200        /*Sleep time after reset*/
+#define RESET_TO_FACTORY_TIME                   350        /*Sleep time after reset*/
 #define POWEWRUP_TO_RESET_TIME                  10
 
 #define INTERVAL_READ_REG                       200  /* unit:ms */
@@ -28,7 +29,9 @@
 #define FTS_180HZ_REPORT_RATE                   0x12
 #define FTS_REG_SMOOTH_LEVEL                    0x85
 #define FTS_REG_GAME_MODE_EN                    0xC3
+#define FTS_REG_CLICK_SENSITIVE                 0x80
 #define FTS_REG_REPORT_RATE                     0x88/*0x12:180hz, 0x0C:120hz*/
+#define FTS_IDLE_FREQ_240                       0x89
 #define FTS_REG_HIGH_FRAME_TIME                 0x8A
 #define FTS_REG_CHARGER_MODE_EN                 0x8B
 #define FTS_REG_EDGE_LIMIT                      0x8C
@@ -48,10 +51,6 @@
 #define FTS_REG_DIFFER_VERSION                	0xCD
 #define FTS_DIFFER_VERSION_V1                	0
 #define FTS_DIFFER_VERSION_V2                	1
-#define FTS_DIFFER_DATA_A_SIZE                  5120
-#define FTS_DIFFER_BUFF_SIZE                    300
-#define FTS_DIFFER_MAX_ROWS                     64
-#define FTS_DIFFER_COLS_PER_ROW                 80
 
 #define FTS_REG_INT_CNT                         0x8F
 #define FTS_REG_FLOW_WORK_CNT                   0x91
@@ -76,7 +75,6 @@
 #define FTS_FW_INFO                             0x96
 #define FTS_REG_TEMPERATURE                     0x97
 #define FTS_REG_PALM_TO_SLEEP_STATUS            0x9B
-#define FTS_REG_INJECT_WDT_RESET                0xB6
 #define FTS_REG_FREQUENCE_WATER_MODE			0xBF
 #define FTS_REG_SET_FP_ERROR_REPORT             0xBF /* bit7 */
 #define FTS_REG_GESTURE_OUTPUT_ADDRESS          0xD3
@@ -86,9 +84,11 @@
 #define FTS_REG_SAMSUNG_SPECIFAL                0xFA
 #define FTS_REG_HEALTH_1                        0xFD
 #define FTS_REG_HEALTH_2                        0xFE
-#define FTS_REG_HEALTH_BASELINE                 0x03
 #define FTS_REG_GLOVE_MODE_SWITCH               0xC0
+#define FTS_REG_GLOVE_MODE_STATE                0x01
 #define FTS_REG_EDGE_LIMIT_SWITCH               0xCE
+
+#define FTS_90HZ_REPORT_RATE                    0x09
 #define FTS_120HZ_REPORT_RATE                   0x0C
 #define FTS_180HZ_REPORT_RATE                   0x12
 #define FTS_240HZ_REPORT_RATE                   0x18
@@ -96,6 +96,7 @@
 #define FTS_720HZ_REPORT_RATE                   0x24            /*not support*/
 
 #define FTS_GET_RATE_120                        120
+#define FTS_GET_RATE_180                        180
 #define FTS_GET_RATE_240                        10
 #define FTS_GET_RATE_300                        300
 #define FTS_GET_RATE_600                        600
@@ -137,6 +138,7 @@
 #define FACTORY_TEST_RETRY                      50
 #define FACTORY_TEST_DELAY                      18
 #define FACTORY_TEST_RETRY_DELAY                100
+#define FACTORY_FTS_RESET_TEST                  0xAD
 
 /* mc_sc */
 #define FACTORY_REG_LINE_ADDR                   0x01
@@ -230,9 +232,6 @@
 #define FTS_720HZ_GAME_MODE                     0x03
 #define INTELLIGENT_GAME_MODE                   11
 #define EXTREME_GAME_MODE                       12
-
-#define FTS_POINTER_BUFFER_LEN                  150
-#define FTS_EDG_BUFFER_LEN                      200
 enum _FTS_RST_REASON {
 	FTS_RST_REASON_UNKNOWN  = 0,
 	FTS_RST_REASON_FWUPDATE = 0x01,
@@ -242,7 +241,7 @@ enum _FTS_RST_REASON {
 };
 
 enum _FTS_FP_ERROR_TYPE {
-	FTS_FINGERPRINT_DOWN_BEFORE_FP_ENABLE = 0,
+	FTS_FINGERPRINT_DOWN_BEFORE_FP_ENABLE = 0x01,
 	FTS_FINGERPRINT_X_Y_NOT_MATCH = 0x02,
 	FTS_ANOTHER_FINGER_ON_NON_FP_ZONE = 0x04,
 	FTS_FINGERPRINT_AREA_NOT_MATCH = 0x10,
@@ -324,15 +323,6 @@ enum FOD_HEALTH_INFO {
 	FOD_DETECT_EFFETIVE_AREA 	= 0x22,
 	FOD_DETECT_ID_REPORRE    	= 0x30,
 };
-
-enum DEBUG_INFO {
-	RESET_TYPE		= 84,
-	DOWN_THD		= 85,
-	UP_THD			= 86,
-	IDLE_THD		= 87,
-	MAX_DIFF_H8		= 88,
-	MAX_DIFF_L8		= 89,
-};
 struct fts_aod_info {
 	u8 gesture_id;
 	u8 point_num;
@@ -389,13 +379,13 @@ struct chip_data_ft3683g {
 	int *scap_rawdata;
 	int *rawdata_linearity;
 	int tp_index;
-	int print_count;
 	int *node_valid;
 	int *node_valid_sc;
 	int gesture_state;
 	int tp_temperature;
 	int freq_point;
 	int glove_mode_flag;
+	int glove_mode_enable_count;
 	bool black_gesture_indep;
 	u8 fre_num;
 	u8 snr_count;
@@ -443,6 +433,7 @@ struct chip_data_ft3683g {
 	int extreme_game_report_rate;
 	bool extreme_game_flag;
 	bool fingerprint_error_report_support;              /*fingerprint error report support*/
+	bool water_level_report_support;                    /*water level report support*/
 };
 
 
@@ -472,7 +463,8 @@ int ft3683g_membist_test(struct seq_file *s, void *chip_data,
                              struct auto_testdata *focal_testdata, struct test_item_info *p_test_item_info);
 int ft3683g_cal_test(struct seq_file *s, void *chip_data,
                              struct auto_testdata *focal_testdata, struct test_item_info *p_test_item_info);
-
+int ft3683g_rst_autotest(struct seq_file *s, void *chip_data,
+			     struct auto_testdata *focal_testdata, struct test_item_info *p_test_item_info);
 
 int fts_write(u8 *writebuf, u32 writelen);
 int fts_write_reg(u8 addr, u8 value);
@@ -483,6 +475,6 @@ int fts_spi_write_direct(u8 *writebuf, u32 writelen);
 int fts_spi_read_direct(u8 *writebuf, u32 writelen, u8 *readbuf, u32 readlen);
 int fts_set_spi_max_speed(unsigned int speed, char mode);
 int fts_reset_proc(int hdelayms);
-
+int ft3683g_rstpin_reset(void *chip_data);
 
 #endif /*__FT3683G_CORE_H__*/

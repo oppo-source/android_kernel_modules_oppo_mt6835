@@ -19,8 +19,8 @@
 #include "hbp_core.h"
 #include "utils/debug.h"
 
-#ifdef QCOM_PLATFORM
-#if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY)
+#if IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
+#include <linux/msm_drm_notify.h>
 #include <linux/soc/qcom/panel_event_notifier.h>
 static void qcom_panel_event_callback(enum panel_event_notifier_tag tag,
 				      struct panel_event_notification *notify,
@@ -41,7 +41,8 @@ static void qcom_panel_event_callback(enum panel_event_notifier_tag tag,
 		}
 	}
 
-	if (notify->notif_type == DRM_PANEL_EVENT_BLANK) {
+	if (notify->notif_type == DRM_PANEL_EVENT_BLANK
+			|| notify->notif_type ==  DRM_PANEL_EVENT_BLANK_LP) {
 		if (notify->notif_data.early_trigger) {
 			event = HBP_PANEL_EVENT_EARLY_SUSPEND;
 		} else {
@@ -51,7 +52,7 @@ static void qcom_panel_event_callback(enum panel_event_notifier_tag tag,
 
 	hbp_dev->panel_cb(event, hbp_dev);
 }
-#else
+#if 0
 #include <linux/msm_drm_notify.h>
 #include <drm/drm_panel.h>
 static int qcom_drm_panel_notifier_callback(struct notifier_block *nb, unsigned long event, void *data)
@@ -84,13 +85,12 @@ static int qcom_drm_panel_notifier_callback(struct notifier_block *nb, unsigned 
 
 	return 0;
 }
-#endif /*end of CONFIG_DRM_PANEL_NOTIFY*/
+
+#endif
 
 static void hbp_register_notify_cb_qcom(struct hbp_device *hbp_dev, struct drm_panel *drm)
 {
-	int ret = 0;
-
-#if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY)
+#if 1
 	void *entry;
 	enum panel_event_notifier_tag tag = (hbp_dev->id == 0)?
 					    PANEL_EVENT_NOTIFICATION_PRIMARY:
@@ -106,6 +106,7 @@ static void hbp_register_notify_cb_qcom(struct hbp_device *hbp_dev, struct drm_p
 		return;
 	}
 #else
+int ret = 0;
 	hbp_dev->fb_notif.notifier_call = qcom_drm_panel_notifier_callback;
 	if (drm) {
 		ret = drm_panel_notifier_register(drm, &hbp_dev->fb_notif);
@@ -115,10 +116,9 @@ static void hbp_register_notify_cb_qcom(struct hbp_device *hbp_dev, struct drm_p
 	}
 #endif
 }
+#endif
 
-#else /*QCOM_PLATFORM*/
-
-#if 1//IS_ENABLED(CONFIG_DRM_MEDIATEK)
+#if IS_ENABLED(CONFIG_TOUCHPANEL_MTK_PLATFORM)
 #include <linux/mtk_disp_notify.h>
 
 static int mtk_drm_panel_notifier_callback(struct notifier_block *nb,
@@ -171,54 +171,64 @@ static void hbp_register_notify_cb_mtk(struct hbp_device *hbp_dev, struct drm_pa
 }
 #endif
 
-#endif /*end of QCOM_PLATFORM*/
 
-void hbp_register_notify_cb(struct hbp_device *hbp_dev, struct device *dev)
+int hbp_register_notify_cb(struct hbp_device *hbp_dev, struct device *dev)
 {
-#ifdef QCOM_PLATFORM
+#if IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
 	struct drm_panel *drm;
 	struct device_node *dsi_np, *panel_np;
 	const char *dsi_name;
 	int i = 0, count = 0;
+	int retry = 0;
 
-	dsi_np = of_find_node_by_name(NULL, "oplus,dsi-display-dev");
-	if (!dsi_np) {
-		dsi_name = "dsi_panel";
-		dsi_np = dev->of_node;
-	} else {
-		if (hbp_dev->id == 0) {
-			dsi_name = "oplus,dsi-panel-primary";
+	for(retry = 0; retry < 10; retry++) {
+		dsi_np = of_find_node_by_name(NULL, "oplus,dsi-display-dev");
+		if (!dsi_np) {
+			dsi_name = "dsi_panel";
+			dsi_np = dev->of_node;
 		} else {
-			dsi_name = "oplus,dsi-panel-secondary";
-		}
-	}
-
-	count = of_count_phandle_with_args(dsi_np, dsi_name, NULL);
-	for (i = 0; i < count; i++) {
-		panel_np = of_parse_phandle(dsi_np, dsi_name, i);
-		if (panel_np) {
-			hbp_info("panel list name:%s\n", panel_np->name);
-			drm = of_drm_find_panel(panel_np);
-			of_node_put(panel_np);
-			if (!IS_ERR_OR_NULL(drm)) {
-				break;
+			if (hbp_dev->id == 0) {
+				dsi_name = "oplus,dsi-panel-primary";
 			} else {
-				hbp_err("drm err %ld",  PTR_ERR(drm));
+				dsi_name = "oplus,dsi-panel-secondary";
 			}
-		} else {
-			hbp_err("failed to find dsi name %s\n", dsi_name);
+		}
+
+		count = of_count_phandle_with_args(dsi_np, dsi_name, NULL);
+		for (i = 0; i < count; i++) {
+			panel_np = of_parse_phandle(dsi_np, dsi_name, i);
+			if (panel_np) {
+				hbp_info("panel list name:%s\n", panel_np->name);
+				drm = of_drm_find_panel(panel_np);
+				of_node_put(panel_np);
+				if (!IS_ERR_OR_NULL(drm)) {
+					break;
+				} else {
+					hbp_err("drm err %ld",  PTR_ERR(drm));
+				}
+			} else {
+				hbp_err("failed to find dsi name %s\n", dsi_name);
+			}
+			if (count < 0 || i == count) {
+				hbp_err("Failed to find attached panel, count = %d\n", count);
+				break;
+			}
+		}
+		if (!IS_ERR_OR_NULL(drm)) {
+			hbp_info("Success to get panel info\n");
+			break;
 		}
 	}
-
-	if (count < 0 || i == count) {
-		hbp_err("Failed to find attached panel, count = %d\n", count);
-		return;
+	if (retry == 10) {
+		hbp_err("ts check panel dt failed\n");
+		return -EPROBE_DEFER;
 	}
 
 	hbp_register_notify_cb_qcom(hbp_dev, drm);
 #else
 	hbp_register_notify_cb_mtk(hbp_dev, NULL);
 #endif
+	return 0;
 }
 
 void hbp_event_call_notifier(unsigned long action, void *data)

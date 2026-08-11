@@ -721,6 +721,7 @@ static int ilitek_tddi_upgrade_mode_return(int hex_mode)
 	}
 	return mode_need_upgrade;
 }
+
 static int ilitek_tddi_fw_ili_convert(u8 *pfw)
 {
 	int i = 0, j = 0, size, blk_num = 0, blk_map = 0, num;

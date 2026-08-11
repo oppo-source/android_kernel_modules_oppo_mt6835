@@ -1505,6 +1505,8 @@ struct WIFI_VAR {
 #if (CFG_HW_DETECT_REPORT == 1)
 	uint8_t fgHwDetectReportEn;
 #endif /* CFG_HW_DETECT_REPORT */
+
+	uint32_t u4CmdTimeout;
 };
 
 /* cnm_timer module */
@@ -2529,6 +2531,9 @@ struct ADAPTER {
 	u_int8_t  fgSmartGearInMonitor;
 #endif
 
+	/* Command timeout tracking */
+	uint32_t u4LastCmdDmaDoneIdx;
+	OS_SYSTIME rLastCmdTxdoneTime;
 };				/* end of _ADAPTER_T */
 
 /*******************************************************************************

@@ -254,6 +254,7 @@ static bool is_need_skip(void)
 
 	if (is_black_contain_skip_stage())
 		return true;
+
 	if (is_slowkernel_skip())
 		return true;
 
@@ -572,9 +573,9 @@ static void check_dt_work_func(struct work_struct *work)
 void black_screen_check_init(void)
 {
 #if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
-        struct device_node *np = NULL;
+	struct device_node *np = NULL;
 #endif
-        g_black_data.status = BLACK_STATUS_INIT;
+	g_black_data.status = BLACK_STATUS_INIT;
 
 #if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
 	np = of_find_node_by_name(NULL, "ssc_interactive");
@@ -582,6 +583,8 @@ void black_screen_check_init(void)
 		pr_err("ssc_interactive dts info missing.\n");
 	} else {
 		if (of_property_read_bool(np, "is-folding-device")) {
+			g_black_data.is_panic = 0;
+			g_bright_data.is_panic = 0;
 			g_black_data.is_fold_dev = true;
 			BLACK_DEBUG_PRINTK("supported fold device");
 		} else {
@@ -603,6 +606,8 @@ void black_screen_check_init(void)
 		return;
 	}
 #if IS_ENABLED(CONFIG_OPLUS_MTK_DRM_SUB_NOTIFY)
+	g_black_data.is_panic = 0;
+	g_bright_data.is_panic = 0;
 	g_black_data.fb_notif_sub.notifier_call = black_fb_notifier_sub_callback;
 	if (mtk_disp_sub_notifier_register("oplus_theia_sub", &g_black_data.fb_notif_sub)) {
 		g_black_data.status = BLACK_STATUS_INIT_FAIL;

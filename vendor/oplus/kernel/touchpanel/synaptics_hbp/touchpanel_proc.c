@@ -106,7 +106,7 @@ static ssize_t proc_get_irq_depth_read(struct file *file, char __user *buffer,
 				       size_t count, loff_t *ppos)
 {
 	int ret = 0;
-	char page[PAGE_SIZE] = {0};
+	char page[TP_PAGE_SIZE] = {0};
 	struct syna_tcm *tcm = PDE_DATA(file_inode(file));
 	struct irq_desc *desc = NULL;
 
@@ -120,7 +120,7 @@ static ssize_t proc_get_irq_depth_read(struct file *file, char __user *buffer,
 		return 0;
 	}
 
-	snprintf(page, PAGE_SIZE - 1, "depth:%u, state:%d\n", desc->depth,
+	snprintf(page, TP_PAGE_SIZE - 1, "depth:%u, state:%d\n", desc->depth,
 		 gpio_get_value(tcm->hw_if->bdata_attn.irq_gpio));
 	ret = simple_read_from_buffer(buffer, count, ppos, page, strlen(page));
 	return ret;
@@ -247,7 +247,30 @@ static int baseline_autotest_open(struct inode *inode, struct file *file)
 	return single_open(file, tp_auto_test_read_func, PDE_DATA(inode));
 }
 
-DECLARE_PROC_OPS(tp_auto_test_proc_fops, baseline_autotest_open, seq_read, NULL, single_release);
+static ssize_t baseline_autotest_write(struct file *file,
+		const char __user *buffer, size_t count, loff_t *ppos)
+{
+	struct syna_tcm *tcm = PDE_DATA(file_inode(file));
+	int value = 0;
+	char buf[4] = {0};
+
+	if (!tcm) {
+		return count;
+	}
+
+	tp_copy_from_user(buf, sizeof(buf), buffer, count, 4);
+
+	if (kstrtoint(buf, 10, &value)) {
+		TP_INFO(tcm->tp_index, "%s: kstrtoint error\n", __func__);
+		return count;
+	}
+
+	TP_INFO(tcm->tp_index, "%s %d\n", __func__, value);
+	tcm->com_test_data.raw_cap_restriction = value;
+	return count;
+}
+
+DECLARE_PROC_OPS(tp_auto_test_proc_fops, baseline_autotest_open, seq_read, baseline_autotest_write, single_release);
 
 
 
@@ -265,30 +288,7 @@ static int tp_auto_test_result_open(struct inode *inode, struct file *file)
 	return single_open(file, tp_auto_test_result_read, PDE_DATA(inode));
 }
 
-static ssize_t baseline_autotest_write(struct file *file,
-		const char __user *buffer, size_t count, loff_t *ppos)
-{
-	int value = 0;
-	char buf[4] = {0};
-	struct touchpanel_data *ts = PDE_DATA(file_inode(file));
-
-	if (!ts) {
-		return count;
-	}
-
-	tp_copy_from_user(buf, sizeof(buf), buffer, count, 4);
-
-	if (kstrtoint(buf, 10, &value)) {
-		TP_INFO(ts->tp_index, "%s: kstrtoint error\n", __func__);
-		return count;
-	}
-
-	TP_INFO(ts->tp_index, "%s %d\n", __func__, value);
-	ts->com_test_data.raw_cap_restriction = value;
-	return count;
-}
-
-DECLARE_PROC_OPS(tp_auto_test_result_fops, tp_auto_test_result_open, seq_read, baseline_autotest_write, single_release);
+DECLARE_PROC_OPS(tp_auto_test_result_fops, tp_auto_test_result_open, seq_read, NULL, single_release);
 
 
 /*proc/touchpanel/framework_mode*/
@@ -331,7 +331,7 @@ static ssize_t proc_coordinate_read(struct file *file, char __user *buffer,
 				    size_t count, loff_t *ppos)
 {
 	int ret = 0;
-	char page[PAGE_SIZE] = {0};
+	char page[TP_PAGE_SIZE] = {0};
 	struct syna_tcm *tcm = PDE_DATA(file_inode(file));
 	struct tcm_touch_data_blob *touch_data;
 
@@ -504,7 +504,7 @@ static ssize_t proc_coordinate_read(struct file *file, char __user *buffer,
 		 Point_3rd.x, Point_3rd.y, \
 		 Point_4th.x, Point_4th.y);
 
-	ret = snprintf(page, PAGE_SIZE - 1,
+	ret = snprintf(page, TP_PAGE_SIZE - 1,
 		       "%u,%d:%d,%d:%d,%d:%d,%d:%d,%d:%d,%d:%d,%u\n", gesture_type,
 		       Point_start.x, Point_start.y, Point_end.x, Point_end.y,
 		       Point_1st.x,   Point_1st.y,   Point_2nd.x, Point_2nd.y,
@@ -519,21 +519,6 @@ static ssize_t proc_coordinate_read(struct file *file, char __user *buffer,
 }
 
 DECLARE_PROC_OPS(proc_coordinate_fops, simple_open, proc_coordinate_read, NULL, NULL);
-
-static void touch_call_notifier_fp(struct fp_underscreen_info *fp_info)
-{
-	struct touchpanel_event event_data;
-
-	memset(&event_data, 0, sizeof(struct touchpanel_event));
-
-	event_data.touch_state = fp_info->touch_state;
-	event_data.area_rate = fp_info->area_rate;
-	event_data.x = fp_info->x;
-	event_data.y = fp_info->y;
-
-	touchpanel_event_call_notifier(EVENT_ACTION_FOR_FINGPRINT,
-		   (void *)&event_data);
-}
 
 static ssize_t proc_fingerprint_trigger_write(struct file *file,
 					const char __user *buffer, size_t count, loff_t *ppos)
@@ -560,18 +545,24 @@ static ssize_t proc_fingerprint_trigger_write(struct file *file,
 
 	if (sscanf(buf, "%d,%d,%d", &is_down, &x_pos, &y_pos)) {
 		if(is_down) {
-			tcm->fp_info.area_rate = 100;
-			tcm->fp_info.x = x_pos;
-			tcm->fp_info.y = y_pos;
-			tcm->fp_info.touch_state = 1;
-			tcm->is_fp_down = true;
-			touch_call_notifier_fp(&tcm->fp_info);
-			TPD_INFO("screen on fingerprint down : (%d, %d)\n", tcm->fp_info.x, tcm->fp_info.y);
+			if (tcm->is_fp_down == false) {
+				tcm->fp_info.area_rate = 100;
+				tcm->fp_info.x = x_pos;
+				tcm->fp_info.y = y_pos;
+				tcm->fp_info.touch_state = 1;
+				tcm->is_fp_down = true;
+				touch_call_notifier_fp(tcm, &tcm->fp_info);
+				TPD_INFO("screen on fingerprint down : (%d, %d)\n", tcm->fp_info.x, tcm->fp_info.y);
+				tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "screen_on_fp_down");
+			} else {
+				TPD_INFO("fingerprint down msg do not send again...\n");
+			}
 		} else {
 			tcm->fp_info.touch_state = 0;
 			tcm->is_fp_down = false;
-			touch_call_notifier_fp(&tcm->fp_info);
+			touch_call_notifier_fp(tcm, &tcm->fp_info);
 			TPD_INFO("screen on fingerprint up : (%d, %d)\n", tcm->fp_info.x, tcm->fp_info.y);
+			tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "screen_on_fp_up");
 		}
 	} else {
 		buf[63] = '\0';
@@ -585,6 +576,96 @@ EXIT:
 
 DECLARE_PROC_OPS(proc_fingerprint_trigger_fops, simple_open, NULL, proc_fingerprint_trigger_write, NULL);
 
+static ssize_t proc_film_info_write(struct file *file,
+					const char __user *buffer, size_t count, loff_t *ppos)
+{
+	struct syna_tcm *tcm = PDE_DATA(file_inode(file));
+	int filmed, level, trusty = 0;
+	char buf[64] = {0};
+
+	if (!tcm) {
+		TPD_INFO("tcm not exist!\n");
+		return count;
+	}
+
+	if (count > 64) {
+		TPD_INFO("%s:count > 64\n", __func__);
+		return count;
+	}
+
+	mutex_lock(&tcm->mutex);
+	if (copy_from_user(buf, buffer, count)) {
+		TPD_INFO("%s: read proc input error.\n", __func__);
+		goto EXIT;
+	}
+
+	if (sscanf(buf, "%d,%d,%d", &filmed, &level, &trusty)) {
+		tcm->film_info.filmed = !!filmed;
+		tcm->film_info.level = level;
+		tcm->film_info.trusty = !!trusty;
+		TPD_INFO("film_info: %d, %d, %d\n", tcm->film_info.filmed, tcm->film_info.level, tcm->film_info.trusty);
+		film_call_notifier_fp(tcm, &tcm->film_info);
+	} else {
+		buf[63] = '\0';
+		TPD_INFO("invalid content: '%s', length = %zd\n", buf, count);
+	}
+
+EXIT:
+	mutex_unlock(&tcm->mutex);
+	return count;
+}
+
+DECLARE_PROC_OPS(proc_film_info_fops, simple_open, NULL, proc_film_info_write, NULL);
+
+static ssize_t proc_under_water_trigger_write(struct file *file,
+					const char __user *buffer, size_t count, loff_t *ppos)
+{
+	struct syna_tcm *tcm = PDE_DATA(file_inode(file));
+	int value = 0;
+	char buf[64] = {0};
+
+	if (!tcm) {
+		TPD_INFO("tcm not exist!\n");
+		return count;
+	}
+
+	if (count > 64) {
+		TPD_INFO("%s:count > 64\n", __func__);
+		return count;
+	}
+
+	mutex_lock(&tcm->mutex);
+	if (copy_from_user(buf, buffer, count)) {
+		TPD_INFO("%s: read proc input error.\n", __func__);
+		goto EXIT;
+	}
+
+	if (sscanf(buf, "%d", &value)) {
+		tcm->under_water = !!value;
+		TPD_INFO("under_water: %d, value: %s\n", tcm->under_water, buf);
+		if (tcm->under_water) {
+			input_report_key(tcm->input_dev, KEY_UNDER_WATER, 1);
+			input_sync(tcm->input_dev);
+			input_report_key(tcm->input_dev, KEY_UNDER_WATER, 0);
+			input_sync(tcm->input_dev);
+		} else {
+			input_report_key(tcm->input_dev, KEY_ON_WATER, 1);
+			input_sync(tcm->input_dev);
+			input_report_key(tcm->input_dev, KEY_ON_WATER, 0);
+			input_sync(tcm->input_dev);
+		}
+		touchpanel_event_call_notifier(EVENT_ACTION_UNDER_WATER, (void *)&tcm->under_water);
+	} else {
+		buf[63] = '\0';
+		TPD_INFO("invalid content: '%s', length = %zd\n", buf, count);
+	}
+
+EXIT:
+	mutex_unlock(&tcm->mutex);
+	return count;
+}
+
+DECLARE_PROC_OPS(proc_under_water_trigger_fops, simple_open, NULL, proc_under_water_trigger_write, NULL);
 
 static ssize_t proc_daemon_state_write(struct file *file,
 					const char __user *buffer, size_t count, loff_t *ppos)
@@ -670,14 +751,14 @@ static ssize_t proc_algo_version_read(struct file *file, char __user *buffer,
 				       size_t count, loff_t *ppos)
 {
 	int ret = 0;
-	char page[PAGE_SIZE] = {0};
+	char page[TP_PAGE_SIZE] = {0};
 	struct syna_tcm *tcm = PDE_DATA(file_inode(file));
 
 	if (!tcm) {
 		return 0;
 	}
 
-	snprintf(page, PAGE_SIZE - 1, "%s\n", tcm->algo_version);
+	snprintf(page, TP_PAGE_SIZE - 1, "%s\n", tcm->algo_version);
 	ret = simple_read_from_buffer(buffer, count, ppos, page, strlen(page));
 	return ret;
 }
@@ -896,15 +977,19 @@ static ssize_t proc_fingerprint_active_write(struct file *file,
 		return count;
 	}
 
+	mutex_lock(&tcm->mutex);
 	tcm->fp_active = !!tmp;
 	TPD_INFO("%s: fp_active = %d.\n", __func__, tcm->fp_active);
 
 	syna_dev_update_lpwg_mode(tcm);
 
+	mutex_unlock(&tcm->mutex);
+
 	return count;
 }
 
 DECLARE_PROC_OPS(proc_fingerprint_active_ops, simple_open, proc_fingerprint_active_read, proc_fingerprint_active_write, NULL);
+
 
 static ssize_t proc_fingerprint_prevent_read(struct file *file, char __user *buffer,
 				     size_t count, loff_t *ppos)
@@ -1165,7 +1250,7 @@ static int tp_baseline_debug_read_func(struct seq_file *s, void *v)
 	}
 
 	/*the diff  is big than one page, so do twice.*/
-	if (s->size <= (PAGE_SIZE * 2)) {
+	if (s->size <= (TP_PAGE_SIZE * 2)) {
 		s->count = s->size;
 		TPD_INFO("%s, %d, size check failed, %zu\n", __func__, __LINE__, s->size);
 		return 0;
@@ -1222,7 +1307,7 @@ static int tp_delta_debug_read_func(struct seq_file *s, void *v)
 
 
 	/*the diff  is big than one page, so do twice.*/
-	if (s->size <= (PAGE_SIZE * 2)) {
+	if (s->size <= (TP_PAGE_SIZE * 2)) {
 		s->count = s->size;
 		return 0;
 	}
@@ -1366,6 +1451,95 @@ static int main_register_open(struct inode *inode, struct file *file)
 }
 
 DECLARE_PROC_OPS(tp_main_register_proc_fops, main_register_open, seq_read, NULL, single_release);
+
+/*proc/touchpanel/debug_info/snr*/
+static ssize_t proc_snr_write(struct file *file, const char __user *buf, size_t count, loff_t *lo)
+{
+	struct syna_tcm  *tcm = PDE_DATA(file_inode(file));
+	int value = 0, i = 0;
+	char buffer[4] = {0};
+
+	if (!tcm) {
+		return count;
+	}
+
+	if (!tcm->snr_read_support) {
+		return count;
+	}
+
+	if (count > 2) {
+		return count;
+	}
+
+	tp_copy_from_user(buffer, sizeof(buffer), buf, count, 2);
+
+	if (kstrtoint(buffer, 10, &value)) {
+		TP_INFO(tcm->tp_index, "%s: kstrtoint error\n", __func__);
+		return count;
+	}
+
+	if (value == 1)  {
+		for (i = 0; i < MAX_FINGER_NUM; i++) {
+			tcm->snr[i].doing = !!value;
+		}
+	} else {
+		TPD_DEBUG("invalid content: '%s', length = %zd\n", buf, count);
+	}
+
+	TPD_INFO("%s, %d : snr write doing = %d.\n", __func__, __LINE__,  tcm->snr[0].doing);
+	return count;
+}
+
+#define SNR_NODE_READ_TIMES 100
+static int tp_baseline_snr_read_func(struct seq_file *s, void *v)
+{
+	struct syna_tcm *tcm = s->private;
+	struct debug_info_proc_operations *debug_info_ops = NULL;
+
+	if (!tcm)
+		return 0;
+
+	if (!tcm->snr_read_support) {
+		return 0;
+	}
+
+	debug_info_ops = (struct debug_info_proc_operations *)(tcm->debug_info_ops);
+
+	if (!debug_info_ops) {
+		TPD_INFO("%s, %d debug_info_ops == NULL\n", __func__, __LINE__);
+		return 0;
+	}
+	if (!debug_info_ops->delta_snr_read) {
+		seq_printf(s, "Not support baseline snr proc node\n");
+		return 0;
+	}
+
+	if (tcm->tcm_dev->is_sleep) {
+		seq_printf(s, "Not in resume over state\n");
+		return 0;
+	}
+
+	if (s->size <= (PAGE_SIZE * 2)) {
+		s->count = s->size;
+		return 0;
+	}
+
+	mutex_lock(&tcm->mutex);
+	if (debug_info_ops->delta_snr_read) {
+		debug_info_ops->delta_snr_read(s, tcm, SNR_NODE_READ_TIMES);
+	}
+
+	mutex_unlock(&tcm->mutex);
+
+	return 0;
+}
+
+static int proc_snr_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, tp_baseline_snr_read_func, PDE_DATA(inode));
+}
+
+DECLARE_PROC_OPS(proc_snr_ops, proc_snr_open, seq_read, proc_snr_write, NULL);
 #endif
 
 /*******Part5:Register node Function  Area********************/
@@ -1439,7 +1613,8 @@ static int init_debug_info_proc(struct syna_tcm *tcm,
 
 	tp_proc_node proc_debug_node[] = {
 #ifndef CONFIG_REMOVE_OPLUS_FUNCTION
-		{"data_limit", 0666, NULL, &tp_limit_data_proc_fops, tcm, false, tcm->tp_data_record_support},/* show limit data interface*/
+		{"data_record", 0666, NULL, &tp_data_record_proc_fops, tcm, false, tcm->tp_data_record_support},/* show data record interface*/
+		{"data_limit", 0666, NULL, &tp_limit_data_proc_fops, tcm, false, true},/* show limit data interface*/
 		{"baseline", 0666, NULL, &tp_baseline_data_proc_fops, tcm, false, true},/* show baseline data interface*/
 
 		{"delta", 0666, NULL, &tp_delta_data_proc_fops, tcm, false, true},/* show delta interface*/
@@ -1451,6 +1626,7 @@ static int init_debug_info_proc(struct syna_tcm *tcm,
 			"health_monitor", 0666, NULL, &tp_health_monitor_proc_fops, tcm, false,
 			tcm->health_monitor_support
 		},
+		{"snr", 0666, NULL, &proc_snr_ops, tcm, false, tcm->snr_read_support},/* show snr record interface*/
 #endif
 	};
 
@@ -1527,6 +1703,12 @@ int init_touchpanel_proc(struct syna_tcm *tcm,
 		},
 		{
 			"fingerprint_trigger", 0666, NULL, &proc_fingerprint_trigger_fops, tcm, false, true
+		},
+		{
+			"film_info", 0666, NULL, &proc_film_info_fops, tcm, false, true
+		},
+		{
+			"under_water_trigger", 0666, NULL, &proc_under_water_trigger_fops, tcm, false, true
 		},
 		{
 			"daemon_state", 0666, NULL, &proc_daemon_state_fops, tcm, false, true

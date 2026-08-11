@@ -13,6 +13,7 @@
 #include <linux/gpio.h>
 #include <linux/uaccess.h>
 #include <linux/cdev.h>
+#include <linux/version.h>
 #include "synaptics_touch_panel_remote.h"
 
 #define CHAR_DEVICE_NAME "rmi"
@@ -622,7 +623,11 @@ static void rmidev_device_cleanup(struct rmidev_data *dev_data)
 	return;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static char *rmi_char_devnode(const struct device *dev, umode_t *mode)
+#else
 static char *rmi_char_devnode(struct device *dev, umode_t *mode)
+#endif
 {
 	if (!mode) {
 		return NULL;
@@ -635,7 +640,11 @@ static char *rmi_char_devnode(struct device *dev, umode_t *mode)
 
 static int rmidev_create_device_class(struct rmidev_data *dev_data)
 {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	dev_data->device_class = class_create(DEVICE_CLASS_NAME);
+#else
 	dev_data->device_class = class_create(THIS_MODULE, DEVICE_CLASS_NAME);
+#endif
 
 	if (IS_ERR(dev_data->device_class)) {
 		pr_err("%s: Failed to create /dev/%s\n",

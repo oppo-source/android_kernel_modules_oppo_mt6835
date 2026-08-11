@@ -852,7 +852,7 @@ static int short_test_ch_to_all(struct chip_data_ft3658u *ts_data,
 {
 	int ret = 0;
 	int i = 0;
-	int short_res[256] = { 0 };
+	int *short_res = NULL;
 	int tx_num = ts_data->hw_res->tx_num;
 	int rx_num = ts_data->hw_res->rx_num;
 	int min_ca = SHORT_MIN_CA;
@@ -884,6 +884,11 @@ static int short_test_ch_to_all(struct chip_data_ft3658u *ts_data,
 	code1 = 1407;
 	FTS_TEST_SAVE_INFO("Offset:%4d,Code1:%4d\n", offset, code1);
 	/*get resistor*/
+	short_res = (int *)kzalloc(256 * sizeof(int), GFP_KERNEL);
+	if (!short_res) {
+		FTS_TEST_SAVE_ERR("kzalloc short_res fail\n");
+		return -1;
+	}
 	for (i = 0; i < ch_num; i++) {
 		code = adc[i];
 		denominator = code1 - code + offset;
@@ -914,6 +919,8 @@ static int short_test_ch_to_all(struct chip_data_ft3658u *ts_data,
 		*result = true;
 	}
 
+	if (short_res)
+		kfree(short_res);
 	return 0;
 }
 
@@ -1755,7 +1762,7 @@ int ft3658u_short_test(struct seq_file *s, void *chip_data,
 {
 	int ret = 0;
 	int offset = 0;
-	int adc[256] = { 0 };
+	int *adc = NULL;
 	u8 ab_ch[256] = { 0 };
 	u8 res_level = 0;
 	bool ca_result = false;
@@ -1763,6 +1770,12 @@ int ft3658u_short_test(struct seq_file *s, void *chip_data,
 
 	FTS_TEST_FUNC_ENTER();
 	FTS_TEST_SAVE_INFO("\n============ Test Item: Short Test\n");
+
+	adc = (int *)kzalloc(256 * sizeof(int), GFP_KERNEL);
+	if (!adc) {
+		FTS_TEST_SAVE_ERR("kzalloc adc fail\n");
+		goto test_err;
+	}
 	ret = enter_factory_mode(ts_data);
 
 	if (ret < 0) {
@@ -1809,6 +1822,8 @@ test_err:
 		ret = TEST_RESULT_ABNORMAL;
 	}
 
+	if (adc)
+		kfree(adc);
 	FTS_TEST_FUNC_EXIT();
 	return ret;
 }

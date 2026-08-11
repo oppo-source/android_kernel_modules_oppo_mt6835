@@ -150,7 +150,6 @@ static int fts_hw_reset(struct chip_data_ft3683g *ts_data, u32 delayms);
 static void fts_get_rawdata_snr(struct chip_data_ft3683g *ts_data);
 static void fts_rate_white_list_ctrl(void *chip_data, int value);
 static int fts_reset(void *chip_data);
-
 /* spi interface */
 static int fts_spi_transfer(struct spi_device *spi, u8 *tx_buf, u8 *rx_buf, u32 len)
 {
@@ -311,7 +310,7 @@ int fts_write(u8 *writebuf, u32 writelen)
 		ts_data->monitor_data->bus_buf = writebuf;
 		ts_data->monitor_data->bus_len = writelen;
 		tp_healthinfo_report(ts_data->monitor_data, HEALTH_BUS,
-				ts_data->monitor_data->health_simulate_trigger ? &ret_err : &ret);
+			   ts_data->monitor_data->health_simulate_trigger ? &ret_err : &ret);
 	}
 
 err_write:
@@ -430,7 +429,7 @@ int fts_read(u8 *cmd, u32 cmdlen, u8 *data, u32 datalen)
 		ts_data->monitor_data->bus_buf = cmd;
 		ts_data->monitor_data->bus_len = cmdlen;
 		tp_healthinfo_report(ts_data->monitor_data, HEALTH_BUS,
-				ts_data->monitor_data->health_simulate_trigger ? &ret_err : &ret);
+			   ts_data->monitor_data->health_simulate_trigger ? &ret_err : &ret);
 	}
 
 err_read:
@@ -1274,7 +1273,7 @@ static int fts_esd_handle(void *chip_data)
 		TPD_INFO("esd check failed, start reset!\n");
 		disable_irq_nosync(ts_data->ts->irq);
 		tp_touch_btnkey_release(ts_data->tp_index);
-		fts_hw_reset(ts_data, RESET_TO_NORMAL_TIME);
+		fts_reset(ts_data);
 		enable_irq(ts_data->ts->irq);
 		flow_work_cnt_last = 0;
 		err_cnt = 0;
@@ -1783,7 +1782,7 @@ static fw_check_state fts_fw_check(void *chip_data,
 
 	if (panel_data->manufacture_info.version) {
 		sprintf(dev_version, "%04x", panel_data->tp_fw);
-		strlcpy(&(panel_data->manufacture_info.version[7]), dev_version, 5);
+		strncpy(&(panel_data->manufacture_info.version[7]), dev_version, 5);
 	}
 
 	return FW_NORMAL;
@@ -2017,53 +2016,37 @@ raw_err:
 
 static void fts_fa_fb_read(struct seq_file *s, void *chip_data, u8 base_cmd) {
 	char *data_a = NULL;
-	u8 *buff = NULL;
+	u8 base_a = base_cmd;
+	u8 *buff;
 	int ret = 0;
 	int i = 0;
 	int j = 0;
-	int offset = 0;
-	int pos = 0;
 
-	data_a = kzalloc(FTS_DIFFER_DATA_A_SIZE , GFP_KERNEL);
+	data_a = kzalloc(5120, GFP_KERNEL);
 	if (!data_a) {
-		TPD_INFO("focal:%s: data_a kmalloc failed\n", __func__);
+		TPD_INFO("focal:%s:kmalloc error.", __func__);
 		return;
 	}
 
-	buff = kzalloc(FTS_DIFFER_BUFF_SIZE, GFP_KERNEL);
-	if (!buff) {
-		TPD_INFO("focal:%s: buff kmalloc failed\n", __func__);
-		goto err_data;
+	buff = kzalloc(300, GFP_KERNEL);
+	if (buff == NULL) {
+		TPD_INFO("focal:%s:kmalloc error\n", __func__);
+		goto end1;
 	}
 
-	ret = fts_read(&base_cmd, 1, data_a, FTS_DIFFER_DATA_A_SIZE);
-	if (ret < 0) {
-		TPD_INFO("focal:%s: fts_read failed, ret=%d\n", __func__, ret);
-		goto exit;
-	}
-
-	seq_printf(s, "%x 5k read start\n", base_cmd);
-
-	for (i = 0; i < FTS_DIFFER_MAX_ROWS; i++) {
-		offset = 0;
-		for (j = 0; j < FTS_DIFFER_COLS_PER_ROW; j++) {
-			pos = i * FTS_DIFFER_COLS_PER_ROW + j;
-
-			offset += snprintf(buff + offset, FTS_DIFFER_BUFF_SIZE - offset,
-								 "%02x ", (unsigned char)data_a[pos]);
-
-			if (offset >= FTS_DIFFER_BUFF_SIZE) {
-				TPD_INFO("focal:%s: buffer overflow at [%d][%d]\n", __func__, i, j);
-				break;
-			}
+	fts_read(&base_a, 1, data_a, 5120);
+	seq_printf(s, "%x 5k read start\n", base_a);
+	for (i = 0; i < 64; i++) {
+		ret = 0;
+		for (j = 0; j < 80; j++) {
+			ret += snprintf(buff + ret, 300 - ret, "%2x ", data_a[i * 80 + j]);
 		}
 		TPD_INFO("[%02d]%s\n", i, buff);
 		seq_printf(s, "[%02d]%s\n", i, buff);
 	}
 
-exit:
 	kfree(buff);
-err_data:
+end1:
 	kfree(data_a);
 }
 
@@ -2413,24 +2396,9 @@ static int fts_enable_black_gesture(struct chip_data_ft3683g *ts_data,
 	u8 gesture_config_D1 = 0xBF;
 	u8 gesture_config_D2 = 0x07;
 	u8 gesture_config_D6 = 0x3E;
-	u8 ucReadD0 = 0;
-	int i = 0;
 
 	TPD_INFO("MODE_GESTURE, write 0xD0=%d", enable);
 	fts_write_reg(FTS_REG_GESTURE_EN, enable);
-	for (i = 0; i < 3; i++) {
-		fts_read_reg(FTS_REG_GESTURE_EN, &ucReadD0);
-		if (ucReadD0 == enable) {
-			TPD_INFO("MODE_GESTURE, Read 0xD0=%d (write success)", ucReadD0);
-			break;
-		} else {
-		    fts_write_reg(FTS_REG_GESTURE_EN, enable);
-		}
-		msleep(10);
-	}
-	if (i >= 3) {
-    	TPD_INFO("MODE_GESTURE, Write 0xD0 failed after 3 retries!");
-	}
 
 	if (enable) {
 			SET_GESTURE_BIT(state, DOU_TAP, gesture_config_D1, 4)
@@ -2540,6 +2508,11 @@ static int fts_enable_game_mode(struct chip_data_ft3683g *ts_data, bool enable)
 				report_rate = FTS_120HZ_REPORT_RATE;
 				break;
 
+			case FTS_GET_RATE_180:
+				game_mode = FTS_240HZ_GAME_MODE;
+				report_rate = FTS_180HZ_REPORT_RATE;
+				break;
+
 			case FTS_GET_RATE_240:
 				game_mode = FTS_240HZ_GAME_MODE;
 				report_rate = FTS_240HZ_REPORT_RATE;
@@ -2588,6 +2561,37 @@ static int fts_enable_game_mode(struct chip_data_ft3683g *ts_data, bool enable)
 	return ret;
 }
 
+static int fts_set_idle_freq_mode(bool enable)
+{
+	int ret = 0;
+	u8 regvalue = 0;
+
+	TPD_INFO("%s: %s IDLE_GAME_GAME.\n", __func__, enable ? "Enter" : "Exit");
+
+	if (enable) {
+		ret = fts_write_reg(FTS_IDLE_FREQ_240, 0x03);
+		if(ret < 0) {
+			TPD_INFO("Failed to set idle 240 game mode config\n");
+			return ret;
+		}
+	} else {
+		ret = fts_write_reg(FTS_IDLE_FREQ_240, 0x06);
+		if(ret < 0) {
+			TPD_INFO("Failed to set idle 120 game mode config\n");
+			return ret;
+		}
+	}
+	ret = fts_read_reg(FTS_IDLE_FREQ_240, &regvalue);
+
+	if(ret < 0) {
+		TPD_INFO("Failed to get idle game mode config\n");
+		return ret;
+	}
+
+	TPD_INFO("IDLE_GAME_GAME, write 0x89 is %d", regvalue);
+	return ret;
+}
+
 static int fts_enable_headset_mode(struct chip_data_ft3683g *ts_data,
                                    bool enable)
 {
@@ -2627,25 +2631,6 @@ static void fts_force_glove_mode(bool enable)
 	TPD_INFO("%s: after edit glove mode reg_val=0x%x", __func__, regval);
 }
 
-static int fts_waterproof_control(bool enable)
-{
-	int retval;
-
-	TPD_INFO("%s: %s waterproof mode.\n", __func__, enable ? "Enter" : "Exit");
-
-	retval = fts_write_reg(FTS_REG_FREQUENCE_WATER_MODE, enable ? 0x00 : 0x03);
-	if (retval < 0) {
-		TPD_INFO("Failed to %s waterproof mode\n",
-				enable ? "enable" : "disable");
-		return retval;
-	}
-
-	TPD_INFO("Waterproof mode %s successfully\n",
-			enable ? "enabled" : "disabled");
-
-	return 0;
-}
-
 static int fts_mode_switch(void *chip_data, work_mode mode, int flag)
 {
 	struct chip_data_ft3683g *ts_data = (struct chip_data_ft3683g *)chip_data;
@@ -2658,6 +2643,12 @@ static int fts_mode_switch(void *chip_data, work_mode mode, int flag)
 
 	case MODE_SLEEP:
 		TPD_INFO("MODE_SLEEP, write 0xA5=3");
+		if (ts_data->fod_info.fp_down) {
+			TPD_INFO("fingerprint auto up");
+			ts_data->ts->view_area_touched = 0;
+			ts_data->fod_info.event_type = 0;
+			ts_data->fod_info.fp_down = 0;
+		}
 		ret = fts_write_reg(FTS_REG_POWER_MODE, 0x03);
 
 		if (ret < 0) {
@@ -2740,14 +2731,6 @@ static int fts_mode_switch(void *chip_data, work_mode mode, int flag)
 
 		break;
 
-	case MODE_WATERPROOF:
-		ret = fts_waterproof_control(flag);
-		if (ret < 0) {
-			TPD_INFO("%s: enable waterproof failed\n", __func__);
-			goto mode_err;
-		}
-		break;
-
 	default:
 		TPD_INFO("%s: Wrong mode.\n", __func__);
 		goto mode_err;
@@ -2757,6 +2740,42 @@ mode_err:
 	return ret;
 }
 
+static void fts_report_rate(void *chip_data, int value)
+{
+	struct chip_data_ft3683g *ts_data = (struct chip_data_ft3683g *)chip_data;
+	int ret = 0;
+	int regvalue = 0;
+
+	TPD_INFO("fts_report_rate_ctrl to  value: %d", value);
+	if (ts_data == NULL) {
+		return;
+	}
+
+	if (ts_data->ts->is_suspended) {
+		return;
+	}
+
+	switch(value) {
+	case REPORT_FPS_DEFAULT:
+		regvalue = FTS_120HZ_REPORT_RATE;
+		break;
+	case REPORT_FPS_180HZ:
+		regvalue = FTS_180HZ_REPORT_RATE;
+		break;
+	case REPORT_FPS_240HZ:
+		regvalue = FTS_240HZ_REPORT_RATE;
+		break;
+	default:
+		TPD_INFO("%s:default report rate = %d \n", __func__, value);
+		return;
+	}
+
+	ret = fts_write_reg(FTS_REG_REPORT_RATE, regvalue);
+	if (ret < 0) {
+		TPD_INFO("write FTS_REG_REPORT_RATE fail");
+		return;
+	}
+}
 static int fts_send_temperature(void *chip_data, int temp, bool normal_mode);
 
 #ifndef CONFIG_ARCH_QTI_VM
@@ -2841,6 +2860,14 @@ static int fts_reset(void *chip_data)
 	return 0;
 }
 
+int ft3683g_rstpin_reset(void *chip_data)
+{
+	struct chip_data_ft3683g *ts_data = (struct chip_data_ft3683g *)chip_data;
+	TPD_INFO("%s:call\n", __func__);
+	fts_hw_reset(ts_data, RESET_TO_FACTORY_TIME);
+
+	return 0;
+}
 static int  fts_reset_gpio_control(void *chip_data, bool enable)
 {
 	struct chip_data_ft3683g *ts_data = (struct chip_data_ft3683g *)chip_data;
@@ -2959,43 +2986,43 @@ static void fts_read_fod_error_info(struct chip_data_ft3683g *ts_data)
 		TPD_INFO("%s:read FOD error info fail", __func__);
 		return;
 	}
-	TPD_INFO("TP_FP_ERROR_REPORT:fingerprint error type:[%*ph]\n", FTS_REG_FOD_ERROR_INFO_LEN, val);
+	TPD_DEBUG("TP_FP_ERROR_REPORT:fingerprint error type:[%*ph]\n", FTS_REG_FOD_ERROR_INFO_LEN, val);
 	switch (val[FTS_REG_FOD_ERROR_INFO_LEN - 1]) {
 	case FTS_FINGERPRINT_AREA_NOT_MATCH:
 		if (ts_data->monitor_data && ts_data->monitor_data->health_monitor_support) {
 			tp_healthinfo_report(ts_data->monitor_data, HEALTH_REPORT, "fingerprint_area_not_match_count");
 		}
-		TPD_INFO("TP_FP_ERROR_REPORT:area size: 0x%x\n", val[12]);
-		TPD_INFO("TP_FP_ERROR_REPORT:FINGERPRINT_AREA_NOT_MATCH\n");
+		TPD_DEBUG("TP_FP_ERROR_REPORT:area size: 0x%x\n", val[12]);
+		TPD_DEBUG("TP_FP_ERROR_REPORT:FINGERPRINT_AREA_NOT_MATCH\n");
 		break;
 	case FTS_ANOTHER_FINGER_ON_NON_FP_ZONE:
 		if (ts_data->monitor_data && ts_data->monitor_data->health_monitor_support) {
 			tp_healthinfo_report(ts_data->monitor_data, HEALTH_REPORT, "another_finger_on_non-fingerprint_zone_count");
 		}
-		TPD_INFO("TP_FP_ERROR_REPORT:x:0x%x,y:0x%x\n", (val[4] << 8) + val[5], (val[6] << 8) + val[7]);
-		TPD_INFO("TP_FP_ERROR_REPORT:ANOTHER_FINGER_ON_NON_FP_ZONE\n");
+		TPD_DEBUG("TP_FP_ERROR_REPORT:x:0x%x,y:0x%x\n", (val[4] << 8) + val[5], (val[6] << 8) + val[7]);
+		TPD_DEBUG("TP_FP_ERROR_REPORT:ANOTHER_FINGER_ON_NON_FP_ZONE\n");
 		break;
 	case FTS_FINGERPRINT_DOWN_BEFORE_FP_ENABLE:
 		if (ts_data->monitor_data && ts_data->monitor_data->health_monitor_support) {
 			tp_healthinfo_report(ts_data->monitor_data, HEALTH_REPORT, "fingerprint_down_before_fp_enable_count");
 		}
-		TPD_INFO("TP_FP_ERROR_REPORT:down time: %*ph\n", 4, val);
-		TPD_INFO("TP_FP_ERROR_REPORT:FINGERPRINT_DOWN_BEFORE_FP_ENABLE\n");
+		TPD_DEBUG("TP_FP_ERROR_REPORT:down time: %*ph\n", 4, val);
+		TPD_DEBUG("TP_FP_ERROR_REPORT:FINGERPRINT_DOWN_BEFORE_FP_ENABLE\n");
 		break;
 	case FTS_FINGERPRINT_X_Y_NOT_MATCH:
 		if (ts_data->monitor_data && ts_data->monitor_data->health_monitor_support) {
 			tp_healthinfo_report(ts_data->monitor_data, HEALTH_REPORT, "fingerprint_x_y_not_match_count");
 		}
-		TPD_INFO("TP_FP_ERROR_REPORT:FINGERPRINT_X_Y_NOT_MATCH\n");
+		TPD_DEBUG("TP_FP_ERROR_REPORT:FINGERPRINT_X_Y_NOT_MATCH\n");
 		break;
 	case FTS_FINGERPRINT_OUT_MOVE_IN:
 		if (ts_data->monitor_data && ts_data->monitor_data->health_monitor_support) {
 			tp_healthinfo_report(ts_data->monitor_data, HEALTH_REPORT, "fingerprint_out_move_in_count");
 		}
-		TPD_INFO("TP_FP_ERROR_REPORT:FINGERPRINT_OUT_MOVE_IN\n");
+		TPD_DEBUG("TP_FP_ERROR_REPORT:FINGERPRINT_OUT_MOVE_IN\n");
 		break;
 	default:
-		TPD_INFO("TP_FP_ERROR_REPORT:unknown fingerprint error type: 0x%x\n", val[FTS_REG_FOD_ERROR_INFO_LEN - 1]);
+		TPD_DEBUG("TP_FP_ERROR_REPORT:unknown fingerprint error type: 0x%x\n", val[FTS_REG_FOD_ERROR_INFO_LEN - 1]);
 		break;
 	}
 
@@ -3105,11 +3132,11 @@ static u32 fts_u32_trigger_reason(void *chip_data, int gesture_enable,
 								(touch_buf[offect + 2*j + 1]));
 		}
 
-			offect += 2 * raw_num;
-			for (j = 0; j < sc_num; j = j + 1) {
-					ts_data->sc_water[j] = (int)(short)((touch_buf[offect + 2*j] << 8) +
-									(touch_buf[offect + 2*j + 1]));
-			}
+		offect += 2 * raw_num;
+		for (j = 0; j < sc_num; j = j + 1) {
+				ts_data->sc_water[j] = (int)(short)((touch_buf[offect + 2*j] << 8) +
+								(touch_buf[offect + 2*j + 1]));
+		}
 
 		offect += 2 * sc_num + 8;
 		for (j = 0; j < sc_num; j = j + 1) {
@@ -3124,12 +3151,8 @@ static u32 fts_u32_trigger_reason(void *chip_data, int gesture_enable,
 	}
 
 	/*glove mode*/
-	TP_SPECIFIC_PRINT(ts_data->tp_index, ts_data->print_count, "GloveMode:%d\n", (touch_buf[0]&0x40) ? 1 : 0);
-	TP_SPECIFIC_PRINT(ts_data->tp_index, ts_data->print_count, "PalmMode:%d, WaterMode:%d\n", (touch_buf[0]&0x02) ? 1 : 0, (touch_buf[0]&0x01) ? 1 : 0);
-	if (buffer_len >= MAX_DIFF_L8) {
-		TP_SPECIFIC_PRINT(ts_data->tp_index, ts_data->print_count, "ResetType:%d, downThd:%d, upThd:%d, idleThd:%d, maxDiff:%d\n",
-			touch_buf[RESET_TYPE], touch_buf[DOWN_THD], touch_buf[UP_THD], touch_buf[IDLE_THD], ((touch_buf[MAX_DIFF_H8] << 8) + touch_buf[MAX_DIFF_L8]));
-	}
+	TPD_DEBUG("%s, GloveMode:%d", __func__, touch_buf[0]&0x40 ? 1 : 0);
+
 	/*confirm need print debug info*/
 	if (touch_buf[0] != ts_data->irq_type) {
 		SET_BIT(result_event, IRQ_FW_HEALTH);
@@ -3470,10 +3493,6 @@ static int fts_get_touch_points(void *chip_data, struct point_info *points,
 					points[pointid].status = 1;
 					obj_attention |= (1 << pointid);
 
-					if (event_num == 0) {
-						TPD_INFO("abnormal touch data from fw");
-						return -EINVAL;
-					}
 				}
 			if (ts_data->differ_read_every_frame && (ts_data->tp_differ_version == FTS_DIFFER_VERSION_V2)) {
 				if (event_flag == 0) {
@@ -3532,21 +3551,27 @@ static void fts_health_report(void *chip_data, struct monitor_data *mon_data)
 	u8 val = 0;
 	u8 cmd = 0;
 	u8 ucMcFreVal[2] = {0};
+	u8 ucHealth01Buf[3] = {0};  /* 3 consecutive bytes from reg 0x01 */
+	u8 waterlevel = 0;          /* water level: high 3 bits of 3rd byte, 0~7 */
+	static u8 last_waterlevel = 0xFF;
 	struct chip_data_ft3683g *ts_data = (struct chip_data_ft3683g *)chip_data;
 	char *freq_str = NULL;
-	int tx_num = ts_data->hw_res->tx_num;
-	int rx_num = ts_data->hw_res->rx_num;
-	int event_num = 0;
-	char point_buff[FTS_POINTER_BUFFER_LEN] = {0};
-	char edge_buff[FTS_EDG_BUFFER_LEN] = {0};
+	char *waterlevel_str = NULL;
 
 	if (IS_ERR_OR_NULL(ts_data) || IS_ERR_OR_NULL(ts_data->monitor_data)) {
 		TPD_INFO("%s:NULL Pointer", __func__);
 		return;
 	}
 
-	ret = fts_read_reg(0x01, &val);
-	val = ts_data->touch_buf[0];
+	/* Read 3 bytes from reg 0x01: 1st byte for existing health report, high 3 bits of 3rd byte for water level */
+	cmd = 0x01;
+	ret = fts_read(&cmd, 1, ucHealth01Buf, 3);
+	if (ret < 0) {
+		TPD_INFO("%s: read 0x01 health reg fail", __func__);
+		return;
+	}
+	val = ucHealth01Buf[0];   /* 1st byte for existing health report */
+	waterlevel = (ucHealth01Buf[2] >> 5) & 0x07;  /* high 3 bits of 3rd byte */
 
 	if (val & 0x01) {
 		ts_data->water_mode = 1;
@@ -3578,13 +3603,6 @@ static void fts_health_report(void *chip_data, struct monitor_data *mon_data)
 	    || ts_data->monitor_data->health_simulate_trigger) {
 		TPD_DETAIL("Health register(0x01):Base Refresh");
 		tp_healthinfo_report(mon_data, HEALTH_REPORT, HEALTH_REPORT_BASELINE_ERR);
-		focal_get_differ_version(ts_data);
-		cmd = FTS_REG_POINTS;
-		ret = fts_read(&cmd, 1, ts_data->touch_buf, ts_data->buffer_len);
-		if ((ts_data->tp_differ_version == FTS_DIFFER_VERSION_V2) && !ret) {
-			TPD_INFO("baseline error ,tp differ print start.\n");
-			fts_print_differ_v2(ts_data, tx_num, rx_num, point_buff, edge_buff, event_num);
-		}
 	}
 	if ((val & 0x10)
 	    || ts_data->monitor_data->health_simulate_trigger) {
@@ -3605,6 +3623,7 @@ static void fts_health_report(void *chip_data, struct monitor_data *mon_data)
 		TPD_INFO("Health register(0x01):GloveMode:1");
 		ts_data->glove_mode_flag = 1;
 		tp_healthinfo_report(mon_data, HEALTH_GLOVE, &ts_data->glove_mode_flag);
+		ts_data->glove_mode_enable_count++;
 	}
 	if ((!(val & 0x40)) && (ts_data->glove_mode_flag == 1)) {
 		TPD_INFO("Health register(0x01):GloveMode:0");
@@ -3622,6 +3641,19 @@ static void fts_health_report(void *chip_data, struct monitor_data *mon_data)
 			TPD_DETAIL("Health register(0x01):FOD");
 			ts_data->fod_trigger = TYPE_SMALL_FOD_TRIGGER;
 		}
+	}
+	/* Water level health report (high 3 bits of 3rd byte, 0~7, report only when level changes) */
+	/* bit7 Accumulated water at bottom, bit6 rainstorm,bit5 light rain*/
+	if ((ts_data->water_level_report_support) &&
+		(last_waterlevel != waterlevel || ts_data->monitor_data->health_simulate_trigger)) {
+		waterlevel_str = kzalloc(16, GFP_KERNEL);
+		if (waterlevel_str) {
+			TPD_INFO("water level: %u", waterlevel);
+			snprintf(waterlevel_str, 16, HEALTH_REPORT_WATER_LEVEL "_%u", waterlevel);
+			tp_healthinfo_report(mon_data, HEALTH_REPORT, waterlevel_str);
+			kfree(waterlevel_str);
+		}
+		last_waterlevel = waterlevel;
 	}
 	/*ret = ft3681_fts_read_reg(FTS_REG_HEALTH_1, &val);
 	TPD_INFO("Health register(0xFD):0x%x(water-flag:%d / noise-flag:%d)" / no-suitable-freq:%d)",
@@ -3647,29 +3679,6 @@ static void fts_health_report(void *chip_data, struct monitor_data *mon_data)
 		}
 	}
 	mon_data->work_freq = val;
-
-	/* baseline_negative*/
-	cmd = FTS_REG_HEALTH_BASELINE;
-	ret = fts_read_reg(cmd, &val);
-	if (ret < 0) {
-		TPD_INFO("read baseline_negative reg failed.\n");
-		return;
-	}
-	/* bit4:1---baseline neg */
-	if (val & 0x10) {
-		TPD_INFO("Health register(0x01):baseline_negative:1");
-		tp_healthinfo_report(mon_data, HEALTH_REPORT, HEALTH_REPORT_BASELINE_NEGATIVE);
-		focal_get_differ_version(ts_data);
-		cmd = FTS_REG_POINTS;
-		ret = fts_read(&cmd, 1, ts_data->touch_buf, ts_data->buffer_len);
-		if ((ts_data->tp_differ_version == FTS_DIFFER_VERSION_V2) && !ret) {
-			TPD_INFO("baseline negative, tp differ print start.\n");
-			fts_print_differ_v2(ts_data, tx_num, rx_num, point_buff, edge_buff, event_num);
-			if (ts_data->ts->exception_upload_support) {
-				tp_exception_report(&ts_data->ts->exception_data, EXCEP_BASELINE_ERR, "Baseline_negative", sizeof("Baseline_negative"));
-			}
-		}
-	}
 }
 
 static int fts_get_gesture_info(void *chip_data, struct gesture_info *gesture)
@@ -3879,8 +3888,7 @@ static void fts_enable_fingerprint_underscreen(void *chip_data, uint32_t enable)
 {
 	int ret = 0;
 	u8 val = 0xFF;
-	u8 ucReadCF = 0;
-	int i = 0;
+	u8 read_val = 0xFF;
 	struct chip_data_ft3683g *ts_data = (struct chip_data_ft3683g *)chip_data;
 
 
@@ -3919,22 +3927,24 @@ static void fts_enable_fingerprint_underscreen(void *chip_data, uint32_t enable)
 
 	TPD_INFO("%s:write %x=%x.", __func__, FTS_REG_FOD_EN, val);
 	ret = fts_write_reg(FTS_REG_FOD_EN, val);
-	for (i = 0; i < 3; i++) {
-		fts_read_reg(FTS_REG_FOD_EN, &ucReadCF);
-		if (ucReadCF == val) {
-			TPD_INFO("MODE_GESTURE, Read 0xCF=%d (write success)", ucReadCF);
-			break;
-		} else {
-		    ret = fts_write_reg(FTS_REG_FOD_EN, val);
-		}
-		msleep(10);
-	}
-	if (i >= 3) {
-    	TPD_INFO("MODE_GESTURE, Write 0xCF failed after 3 retries!");
-	}
 
 	if (ret < 0) {
 		TPD_INFO("%s: write FOD enable(%x=%x) fail", __func__, FTS_REG_FOD_EN, val);
+	}
+
+	/* Read back FOD register to verify the value */
+	ret = fts_read_reg(FTS_REG_FOD_EN, &read_val);
+	if (ret < 0) {
+		TPD_INFO("%s: read FOD enable(%x) fail", __func__, FTS_REG_FOD_EN);
+	} else {
+		if (read_val != val) {
+			TPD_INFO("%s: FOD register mismatch, read=%x, expected=%x, retry write",
+			          __func__, read_val, val);
+			ret = fts_write_reg(FTS_REG_FOD_EN, val);
+			if (ret < 0) {
+				TPD_INFO("%s: retry write FOD enable(%x=%x) fail", __func__, FTS_REG_FOD_EN, val);
+			}
+		}
 	}
 }
 
@@ -3960,6 +3970,10 @@ static void fts_screenon_fingerprint_info(void *chip_data,
 	TPD_INFO("FOD Info:touch_state:%d,area_rate:%d,x:%d,y:%d[fp_down:%d]",
 	         fp_tpinfo->touch_state, fp_tpinfo->area_rate, fp_tpinfo->x,
 	         fp_tpinfo->y, ts_data->fod_info.fp_down);
+
+	if (ts_data->fingerprint_error_report_support && fp_tpinfo->touch_state == FINGERPRINT_UP_DETECT) {
+		fts_read_fod_error_info(ts_data);
+	}
 }
 
 static void fts_register_info_read(void *chip_data, uint16_t register_addr,
@@ -4041,39 +4055,6 @@ static void fts_force_water_mode(void *chip_data, bool enable)
 	TPD_INFO("%s: now reg_val=0x%x", __func__, regval);
 }
 
-static void fts_inject_wdt_reset(void *chip_data, int value)
-{
-	int retval = 0;
-	u8 regval = 0;
-
-	TPD_INFO("%s: %s inject watchdog reset.\n", __func__, value ? "Enter" : "Exit");
-
-	retval = fts_read_reg(FTS_REG_INJECT_WDT_RESET, &regval);
-	if(retval < 0) {
-		TPD_INFO("Failed to get watchdog reset config\n");
-		return;
-	}
-
-	if (value) {
-		regval = regval | 0x03;
-	} else {
-		regval = regval & 0xfc;
-	}
-
-	retval = fts_write_reg(FTS_REG_INJECT_WDT_RESET, regval);
-	if(retval < 0) {
-		TPD_INFO("Failed to write inject watchdog reset\n");
-		return;
-	}
-
-	retval = fts_read_reg(FTS_REG_INJECT_WDT_RESET, &regval);
-	if(retval < 0) {
-		TPD_INFO("Failed to read inject watchdog reset\n");
-		return;
-	}
-	TPD_INFO("%s: now reg_val=0x%x", __func__, regval);
-}
-
 static void fts_freq_hop_trigger(void *chip_data)
 {
 	int retval = 0;
@@ -4133,6 +4114,29 @@ static int fts_sensitive_lv_set(void *chip_data, int level)
 	return 0;
 }
 
+static int fts_click_sensitive_lv_set(void *chip_data, int level)
+{
+	int ret = 0;
+	u8 regval = 0;
+
+	TPD_INFO("%s:click_sensitive_lv_set to %d", __func__, level);
+
+	ret = fts_write_reg(FTS_REG_CLICK_SENSITIVE, level);
+	if (ret < 0) {
+		TPD_INFO("write FTS_REG_CLICK_SENSITIVE fail");
+		return ret;
+	}
+
+	ret = fts_read_reg(FTS_REG_CLICK_SENSITIVE, &regval);
+	if(ret < 0) {
+		TPD_INFO("Failed to get click_sensitive_lv config\n");
+		return ret;
+	}
+	TPD_INFO("%s: now click_sensitive_lv_set =0x%x", __func__, regval);
+
+	return ret;
+}
+
 static int fts_set_high_frame_rate(void *chip_data, int level, int time)
 {
 	int ret = 0;
@@ -4173,8 +4177,10 @@ static void fts_get_rawdata_snr(struct chip_data_ft3683g *ts_data)
 	} else if (ts_data->tp_differ_version == FTS_DIFFER_VERSION_V2) {
 		ts_data->snr_count = touch_buf[151];
 		data_8 = &touch_buf[154];
-	} else {
-		TPD_INFO("%s:get ts_data->tp_differ_version fail.", __func__);
+	}
+
+	if (!data_8) {
+		TPD_INFO("%s: Invalid differ version or data_8 not initialized", __func__);
 		return;
 	}
 
@@ -4459,7 +4465,6 @@ static int ft3683g_parse_dts(struct chip_data_ft3683g *ts_data, struct spi_devic
 	ts_data->high_resolution_support_x8 = of_property_read_bool(np, "high_resolution_support_x8");
 	TPD_INFO("%s:high_resolution_support is:%d %d\n", __func__, ts_data->high_resolution_support,
 	         ts_data->high_resolution_support_x8);
-
 	chip_np = of_get_child_by_name(np, "FT3683G");
 
 	if (!chip_np) {
@@ -4475,6 +4480,7 @@ static int ft3683g_parse_dts(struct chip_data_ft3683g *ts_data, struct spi_devic
 		ts_data->extreme_game_flag = false;
 		TPD_INFO("extreme_game_report_rate %d\n", ts_data->extreme_game_report_rate);
 	}
+
 
 	return 0;
 }
@@ -4511,6 +4517,26 @@ static void fts_get_water_mode(void *chip_data)
 	}
 }
 
+static void fts_get_glove_mode(void *chip_data, int *enable, int *count)
+{
+	int retval = 0;
+	u8 regval = 0;
+	struct chip_data_ft3683g *ts_data = (struct chip_data_ft3683g *)chip_data;
+
+	if (!ts_data || !enable || !count) {
+		TPD_INFO("Failed to get glove mode config, null pointer");
+		return;
+	}
+
+	retval = fts_read_reg(FTS_REG_GLOVE_MODE_SWITCH, &regval);
+	if(retval < 0) {
+		TPD_INFO("Failed to get glove mode config\n");
+		return;
+	}
+
+	*count = ts_data->glove_mode_enable_count;
+	*enable = regval;
+}
 
 static void fts_edge_limit_switch_write(void *chip_data, int value)
 {
@@ -4562,6 +4588,7 @@ static struct oplus_touchpanel_operations fts_ops = {
 	.tp_refresh_switch          = fts_refresh_switch,
 	.smooth_lv_set              = fts_smooth_lv_set,
 	.sensitive_lv_set           = fts_sensitive_lv_set,
+	.click_sensitive_lv_set     = fts_click_sensitive_lv_set,
 	.enable_gesture_mask        = fts_enable_gesture_mask,
 	.set_gesture_state          = fts_set_gesture_state,
 	.send_temperature           = fts_send_temperature,
@@ -4571,10 +4598,12 @@ static struct oplus_touchpanel_operations fts_ops = {
 	.set_high_frame_rate        = fts_set_high_frame_rate,
 	.rate_white_list_ctrl       = fts_rate_white_list_ctrl,
 	.edge_limit_switch_write    = fts_edge_limit_switch_write,
+	.report_rate                = fts_report_rate,
 	.diaphragm_touch_lv_set         = fts_diaphragm_touch_lv_set,
 	.get_water_mode            = fts_get_water_mode,
+	.get_glove_mode            = fts_get_glove_mode,
 	.aiunit_game_info          = fts_aiunit_game_info,
-	.inject_wdt_reset           = fts_inject_wdt_reset,
+	.set_idle_freq_mode        = fts_set_idle_freq_mode,
 };
 
 static struct focal_auto_test_operations ft3683g_test_ops = {
@@ -4588,6 +4617,7 @@ static struct focal_auto_test_operations ft3683g_test_ops = {
 	.test7 = ft3683g_panel_differ_test,
 	.test8 = ft3683g_membist_test,
 	.test9 = ft3683g_cal_test,
+	.test12 = ft3683g_rst_autotest,
 	.auto_test_endoperation = ft3683g_auto_endoperation,
 };
 
@@ -4635,12 +4665,14 @@ static int fts_tp_probe(struct spi_device *spi)
 	spi->cs_inactive.value = 1;
 	spi->cs_inactive.unit = 0;
 #endif /* end of LINUX_VERSION_CODE*/
-#endif /* end of CONFIG_TOUCHPANEL_MTK_PLATFORM*/
+#endif
+
 	ret = spi_setup(spi);
 	if (ret) {
 		TPD_INFO("spi setup fail");
 		return ret;
 	}
+
 	/*step1:Alloc chip_info*/
 	ts_data = kzalloc(sizeof(struct chip_data_ft3683g), GFP_KERNEL);
 
@@ -4737,13 +4769,11 @@ static int fts_tp_probe(struct spi_device *spi)
 
 	ts_data->black_gesture_indep = ts->black_gesture_indep_support;
 	ts_data->fingerprint_error_report_support = ts->fingerprint_error_report_support;
+	ts_data->water_level_report_support = ts->water_level_report_support;
 		if (ts->health_monitor_support) {
 		tp_healthinfo_report(&ts->monitor_data, HEALTH_PROBE, &time_counter);
 	}
 	ts_data->probe_done = 1;
-	if (ts->esd_handle_support) {
-		ts_data->esd_check_enabled = true;
-	}
 	TPD_INFO("%s, probe normal end\n", __func__);
 
 	return 0;
@@ -4789,13 +4819,7 @@ static int fts_tp_remove(struct spi_device *spi)
 {
 	struct touchpanel_data *ts = spi_get_drvdata(spi);
 	struct chip_data_ft3683g *ts_data = (struct chip_data_ft3683g *)ts->chip_data;
-	if (!ts) {
-		TPD_INFO("%s spi_get_drvdata(spi) is null.\n", __func__);
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
-#else
-		return -EINVAL;
-#endif
-	}
+
 	TPD_INFO("%s is called\n", __func__);
 	fts_point_report_check_exit(ts_data);
 	fts_release_apk_debug_channel(ts_data);
